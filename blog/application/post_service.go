@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/google/go-github/v75/github"
@@ -13,10 +14,26 @@ type PostService struct {
 	// postRepository domain.PostRepository
 	// repoOwner string
 	// repoName string
+
+	// Service lifecycle context - cancelled when Close() is called
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewPostService() *PostService {
-	return &PostService{}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &PostService{
+		ctx:    ctx,
+		cancel: cancel,
+	}
+}
+
+// Close gracefully shuts down the PostService by cancelling all background workers
+func (s *PostService) Close() error {
+	s.cancel()
+	// TODO: Optionally wait for workers to complete with a timeout
+	// This could be done by tracking active workers with a WaitGroup
+	return nil
 }
 
 // SyncRepositoryChanges syncs posts from recent commits across all branches
@@ -171,6 +188,8 @@ func (s *PostService) UpsertPost() error {
 }
 
 // HandlePushEvent processes a GitHub push event and updates posts accordingly
+// This method returns immediately after validating the event and spawning async workers
+// Workers use the service's lifecycle context, not the request context
 func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 	// TODO: Get expected repository name from environment variable or config
 	expectedRepo := "" // TODO: Load from config/env
@@ -250,6 +269,10 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 	latestCommit := commits[len(commits)-1]
 	latestCommitTime := latestCommit.GetTimestamp().Time
 
+	// Spawn async workers to process posts using sync.WaitGroup.Go (Go 1.25+)
+	// We don't wait for them to complete - they run in the background
+	var wg sync.WaitGroup
+
 	// Process deleted post files - unset PublishedAt
 	for filePath := range deletedFiles {
 		postID := extractPostID(filePath)
@@ -258,20 +281,29 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 			continue
 		}
 
-		// TODO: Fetch existing post and unset PublishedAt
-		// post, err := postRepository.GetPost(postID)
-		// if err != nil {
-		//     // Post doesn't exist, nothing to do
-		//     continue
-		// }
-		// post.PublishedAt = time.Time{} // Zero value = unpublished
-		// post.UpdatedAt = latestCommitTime
-		// err = postRepository.UpsertPost(post)
-		// if err != nil {
-		//     return fmt.Errorf("failed to unpublish post %s: %w", postID, err)
-		// }
+		// Capture variables for closure
+		capturedPostID := postID
+		capturedCommitTime := latestCommitTime
 
-		_ = postID
+		wg.Go(func() {
+			// Use the service's lifecycle context for cancellation
+			// TODO: Fetch existing post and unset PublishedAt
+			// post, err := s.postRepository.GetPost(capturedPostID)
+			// if err != nil {
+			//     // Post doesn't exist, nothing to do
+			//     return
+			// }
+			// post.PublishedAt = time.Time{} // Zero value = unpublished
+			// post.UpdatedAt = capturedCommitTime
+			// err = s.postRepository.UpsertPost(post)
+			// if err != nil {
+			//     // Log error but don't fail the whole batch
+			//     log.Error().Err(err).Str("postID", capturedPostID).Msg("Failed to unpublish post")
+			// }
+
+			_ = capturedPostID
+			_ = capturedCommitTime
+		})
 	}
 
 	// Process changed post files
@@ -282,56 +314,128 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 			continue
 		}
 
-		// TODO: Fetch the file content from the repository
-		// This requires making a GitHub API call to get the file contents
-		// content := fetchFileContent(evt.GetRepo().GetFullName(), ref, filePath)
+		// Capture variables for closure
+		capturedPostID := postID
+		capturedFilePath := filePath
+		capturedFileInfo := fileInfo
+		capturedRef := ref
+		capturedIsMainBranch := isMainBranch
+		capturedCommitTime := latestCommitTime
+		capturedRepoFullName := evt.GetRepo().GetFullName()
 
-		// TODO: Parse markdown and extract title
-		// Title should be the text of the first H1 header.
-		// If there are no H1 headers, use the title from the filename, converted to title case.
-		// title := extractTitle(content, filePath)
-
-		// TODO: Extract snippet from markdown
-		// snippet := extractSnippet(content)
-
-		// TODO: Convert markdown to HTML
-		// htmlContent := convertMarkdownToHTML(content)
-
-		// TODO: Store HTML content on filesystem
-		// htmlPath := storeHTMLToFile(postID, htmlContent)
-
-		// TODO: Create/update post in database
-		// post := &domain.Post{
-		//     ID:          postID,
-		//     Title:       title,
-		//     Snippet:     snippet,
-		//     HTMLPath:    htmlPath,
-		//     UpdatedAt:   fileInfo.modifiedAt,
-		//     CreatedAt:   fileInfo.createdAt,
-		// }
-		//
-		// if isMainBranch {
-		//     post.PublishedAt = latestCommitTime
-		// } else {
-		//     // Non-main branch: process and store but don't publish
-		//     post.PublishedAt = time.Time{} // Zero value = unpublished
-		// }
-		//
-		// TODO: Call repository to upsert post
-		// err := postRepository.UpsertPost(post)
-		// if err != nil {
-		//     return fmt.Errorf("failed to upsert post %s: %w", postID, err)
-		// }
-
-		_ = postID
-		_ = fileInfo
-		_ = latestCommitTime
-		_ = isMainBranch
+		wg.Go(func() {
+			// Use the service's lifecycle context for cancellation
+			s.processPostFile(s.ctx, capturedPostID, capturedFilePath, capturedFileInfo, capturedRef, capturedRepoFullName, capturedIsMainBranch, capturedCommitTime)
+		})
 	}
+
+	// Don't wait for the workers to complete - return immediately
+	// The workers will continue processing in the background
+	// Note: We don't need to explicitly wait - wg.Go handles the lifecycle
+	// The goroutines will complete on their own, and errors are logged internally
 
 	return nil
 }
 
+
+// processPostFile processes a single post file asynchronously
+// This function respects context cancellation for graceful shutdown
+func (s *PostService) processPostFile(
+	ctx context.Context,
+	postID string,
+	filePath string,
+	fileInfo commitFileInfo,
+	ref string,
+	repoFullName string,
+	isMainBranch bool,
+	latestCommitTime time.Time,
+) {
+	// Check if context is cancelled before starting expensive operations
+	select {
+	case <-ctx.Done():
+		// TODO: Log cancellation
+		// log.Debug().Str("postID", postID).Msg("Post processing cancelled")
+		return
+	default:
+	}
+
+	// TODO: Fetch the file content from the repository
+	// This requires making a GitHub API call to get the file contents
+	// content, err := s.fetchFileContent(ctx, repoFullName, ref, filePath)
+	// if err != nil {
+	//     if ctx.Err() != nil {
+	//         // Context was cancelled
+	//         return
+	//     }
+	//     // Log error but don't fail
+	//     log.Error().Err(err).Str("filePath", filePath).Msg("Failed to fetch file content")
+	//     return
+	// }
+
+	// Check cancellation again before expensive parsing
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	// TODO: Parse markdown and extract title
+	// Title should be the text of the first H1 header.
+	// If there are no H1 headers, use the title from the filename, converted to title case.
+	// title := extractTitle(content, filePath)
+
+	// TODO: Extract snippet from markdown
+	// snippet := extractSnippet(content)
+
+	// TODO: Convert markdown to HTML (potentially expensive operation)
+	// htmlContent := convertMarkdownToHTML(content)
+
+	// Check cancellation before I/O operations
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	// TODO: Store HTML content on filesystem
+	// htmlPath := storeHTMLToFile(postID, htmlContent)
+
+	// TODO: Create/update post in database
+	// post := &domain.Post{
+	//     ID:          postID,
+	//     Title:       title,
+	//     Snippet:     snippet,
+	//     HTMLPath:    htmlPath,
+	//     UpdatedAt:   fileInfo.modifiedAt,
+	//     CreatedAt:   fileInfo.createdAt,
+	// }
+	//
+	// if isMainBranch {
+	//     post.PublishedAt = latestCommitTime
+	// } else {
+	//     // Non-main branch: process and store but don't publish
+	//     post.PublishedAt = time.Time{} // Zero value = unpublished
+	// }
+	//
+	// err = s.postRepository.UpsertPost(post)
+	// if err != nil {
+	//     if ctx.Err() != nil {
+	//         // Context was cancelled
+	//         return
+	//     }
+	//     // Log error but don't fail
+	//     log.Error().Err(err).Str("postID", postID).Msg("Failed to upsert post")
+	//     return
+	// }
+
+	_ = postID
+	_ = filePath
+	_ = fileInfo
+	_ = ref
+	_ = repoFullName
+	_ = isMainBranch
+	_ = latestCommitTime
+}
 
 // commitFileInfo tracks when a file was first created and last modified in a push
 type commitFileInfo struct {

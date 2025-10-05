@@ -49,6 +49,8 @@ func (h *WebhookHandler) HandleGitWebhook(w http.ResponseWriter, r *http.Request
 
 	switch evt := event.(type) {
 	case *github.PushEvent:
+		// PostService uses its own lifecycle context, not the request context
+		// This allows workers to continue after the HTTP response is sent
 		err = h.postService.HandlePushEvent(evt)
 	}
 	if err != nil {
@@ -56,7 +58,7 @@ func (h *WebhookHandler) HandleGitWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Handle the event
+	// Respond immediately - post processing happens asynchronously
 	w.WriteHeader(http.StatusNoContent)
 }
 
