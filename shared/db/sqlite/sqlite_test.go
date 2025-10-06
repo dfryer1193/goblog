@@ -11,25 +11,17 @@ import (
 func TestNewSQLiteDB(t *testing.T) {
 	tests := []struct {
 		name     string
-		dbPath   string
 		envValue string
 		want     string
 	}{
 		{
-			name:   "explicit path",
-			dbPath: "/tmp/test.db",
-			want:   "/tmp/test.db",
-		},
-		{
 			name:     "env variable",
-			dbPath:   "",
 			envValue: "/tmp/env.db",
 			want:     "/tmp/env.db",
 		},
 		{
-			name:   "default path",
-			dbPath: "",
-			want:   "./goblog.db",
+			name: "default path",
+			want: "./goblog.db",
 		},
 	}
 
@@ -54,6 +46,22 @@ func TestNewSQLiteDB(t *testing.T) {
 				t.Errorf("dbPath = %v, want %v", sqliteDB.dbPath, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewSQLiteDBWithExplicitPath(t *testing.T) {
+	cfg := &SQLiteConfig{
+		Path: "/tmp/test.db",
+	}
+
+	database := NewSQLiteDB(cfg)
+	sqliteDB, ok := database.(*SQLiteDB)
+	if !ok {
+		t.Fatal("expected *SQLiteDB type")
+	}
+
+	if sqliteDB.dbPath != "/tmp/test.db" {
+		t.Errorf("dbPath = %v, want %v", sqliteDB.dbPath, "/tmp/test.db")
 	}
 }
 

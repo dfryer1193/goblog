@@ -20,12 +20,17 @@ func NewPostRepository(db *sql.DB) *SQLitePostRepository {
 	}
 }
 
-// NewPostRepositoryFromSqlx creates a new SQLitePostRepository from an sqlx.DB
-func NewPostRepositoryFromSqlx(db *sqlx.DB) *SQLitePostRepository {
-	return &SQLitePostRepository{
-		db: db,
-	}
-}
+const upsertPostQuery = `
+		INSERT INTO posts (id, title, snippet, html_path, updated_at, published_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			snippet = excluded.snippet,
+			html_path = excluded.html_path,
+			updated_at = excluded.updated_at,
+			published_at = excluded.published_at,
+			created_at = COALESCE(posts.created_at, excluded.created_at)
+`
 
 // UpsertPost inserts or updates a post in the database
 // Uses INSERT ... ON CONFLICT for SQLite (requires SQLite 3.24.0+)
@@ -50,16 +55,7 @@ func (r *SQLitePostRepository) UpsertPost(p *domain.Post) error {
 		createdAt = p.CreatedAt
 	}
 
-	query := `
-		INSERT INTO posts (id, title, snippet, html_path, updated_at, published_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			title = excluded.title,
-			snippet = excluded.snippet,
-			html_path = excluded.html_path,
-			updated_at = excluded.updated_at,
-			published_at = excluded.published_at,
-	`
+	query := upsertPostQuery
 
 	_, err := r.db.Exec(query,
 		p.ID,
@@ -78,17 +74,19 @@ func (r *SQLitePostRepository) UpsertPost(p *domain.Post) error {
 	return nil
 }
 
+const getPostQuery = `
+		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
+		FROM posts
+		WHERE id = ?
+`
+
 // GetPost retrieves a single post by ID
 func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 	if id == "" {
 		return nil, fmt.Errorf("post ID cannot be empty")
 	}
 
-	query := `
-		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
-		FROM posts
-		WHERE id = ?
-	`
+	query := getPostQuery
 
 	// Use intermediate struct with NullTime for scanning
 	var row struct {
@@ -132,6 +130,14 @@ func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 	return post, nil
 }
 
+const listPublishedPostsQuery = `
+		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
+		FROM posts
+		WHERE published_at IS NOT NULL
+		ORDER BY published_at DESC
+		LIMIT ? OFFSET ?
+`
+
 // ListPublishedPosts retrieves published posts ordered by publish date descending
 // Only returns posts where published_at is not NULL
 func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.Post, error) {
@@ -142,13 +148,7 @@ func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.
 		offset = 0
 	}
 
-	query := `
-		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
-		FROM posts
-		WHERE published_at IS NOT NULL
-		ORDER BY published_at DESC
-		LIMIT ? OFFSET ?
-	`
+	query := listPublishedPostsQuery
 
 	// Use intermediate struct with NullTime for scanning
 	var rows []struct {
