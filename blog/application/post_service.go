@@ -18,6 +18,7 @@ type PostService struct {
 	// Service lifecycle context - cancelled when Close() is called
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     *sync.WaitGroup
 }
 
 func NewPostService() *PostService {
@@ -25,14 +26,15 @@ func NewPostService() *PostService {
 	return &PostService{
 		ctx:    ctx,
 		cancel: cancel,
+		wg:     &sync.WaitGroup{},
 	}
 }
 
 // Close gracefully shuts down the PostService by cancelling all background workers
 func (s *PostService) Close() error {
 	s.cancel()
-	// TODO: Optionally wait for workers to complete with a timeout
-	// This could be done by tracking active workers with a WaitGroup
+	s.wg.Wait()
+
 	return nil
 }
 
@@ -337,7 +339,6 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 	return nil
 }
 
-
 // processPostFile processes a single post file asynchronously
 // This function respects context cancellation for graceful shutdown
 func (s *PostService) processPostFile(
@@ -495,4 +496,3 @@ func extractPostID(path string) string {
 
 	return id
 }
-

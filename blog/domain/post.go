@@ -17,4 +17,6 @@ type Post struct {
 
 type PostRepository interface {
 	UpsertPost(p *Post) error
+	GetPost(id string) (*Post, error)
+	ListPublishedPosts(limit, offset int) ([]*Post, error)
 }
