@@ -479,5 +479,5 @@ func TestPostRepository_ListPublishedPosts_NegativeOffset(t *testing.T) {
 }
 
 func TestPostRepository_InterfaceCompliance(t *testing.T) {
-	var _ domain.PostRepository = (*PostRepository)(nil)
+	var _ domain.PostRepository = (*SQLitePostRepository)(nil)
 }

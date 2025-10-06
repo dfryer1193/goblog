@@ -8,28 +8,28 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// PostRepository implements domain.PostRepository using SQL database (SQLite)
-type PostRepository struct {
+// SQLitePostRepository implements domain.PostRepository using SQL database (SQLite)
+type SQLitePostRepository struct {
 	db *sqlx.DB
 }
 
-// NewPostRepository creates a new PostRepository from a standard sql.DB
-func NewPostRepository(db *sql.DB) *PostRepository {
-	return &PostRepository{
+// NewPostRepository creates a new SQLitePostRepository from a standard sql.DB
+func NewPostRepository(db *sql.DB) *SQLitePostRepository {
+	return &SQLitePostRepository{
 		db: sqlx.NewDb(db, "sqlite"),
 	}
 }
 
-// NewPostRepositoryFromSqlx creates a new PostRepository from an sqlx.DB
-func NewPostRepositoryFromSqlx(db *sqlx.DB) *PostRepository {
-	return &PostRepository{
+// NewPostRepositoryFromSqlx creates a new SQLitePostRepository from an sqlx.DB
+func NewPostRepositoryFromSqlx(db *sqlx.DB) *SQLitePostRepository {
+	return &SQLitePostRepository{
 		db: db,
 	}
 }
 
 // UpsertPost inserts or updates a post in the database
 // Uses INSERT ... ON CONFLICT for SQLite (requires SQLite 3.24.0+)
-func (r *PostRepository) UpsertPost(p *domain.Post) error {
+func (r *SQLitePostRepository) UpsertPost(p *domain.Post) error {
 	if p == nil {
 		return fmt.Errorf("post cannot be nil")
 	}
@@ -59,7 +59,6 @@ func (r *PostRepository) UpsertPost(p *domain.Post) error {
 			html_path = excluded.html_path,
 			updated_at = excluded.updated_at,
 			published_at = excluded.published_at,
-			created_at = COALESCE(posts.created_at, excluded.created_at)
 	`
 
 	_, err := r.db.Exec(query,
@@ -80,7 +79,7 @@ func (r *PostRepository) UpsertPost(p *domain.Post) error {
 }
 
 // GetPost retrieves a single post by ID
-func (r *PostRepository) GetPost(id string) (*domain.Post, error) {
+func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 	if id == "" {
 		return nil, fmt.Errorf("post ID cannot be empty")
 	}
@@ -135,7 +134,7 @@ func (r *PostRepository) GetPost(id string) (*domain.Post, error) {
 
 // ListPublishedPosts retrieves published posts ordered by publish date descending
 // Only returns posts where published_at is not NULL
-func (r *PostRepository) ListPublishedPosts(limit, offset int) ([]*domain.Post, error) {
+func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.Post, error) {
 	if limit <= 0 {
 		limit = 10 // Default limit
 	}

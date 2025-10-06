@@ -5,13 +5,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dfryer1193/goblog/blog/domain"
 	"github.com/google/go-github/v75/github"
 )
 
 type PostService struct {
 	// TODO: Add dependencies like PostRepository, GitHub client, etc.
 	// githubClient *github.Client
-	// postRepository domain.PostRepository
 	// repoOwner string
 	// repoName string
 
@@ -19,14 +19,17 @@ type PostService struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
+
+	repo domain.PostRepository
 }
 
-func NewPostService() *PostService {
+func NewPostService(repo domain.PostRepository) *PostService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PostService{
 		ctx:    ctx,
 		cancel: cancel,
 		wg:     &sync.WaitGroup{},
+		repo:   repo,
 	}
 }
 
@@ -115,13 +118,13 @@ func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo str
 	//             }
 	//
 	//             // TODO: Fetch existing post and unset PublishedAt
-	//             // post, err := s.postRepository.GetPost(postID)
+	//             // post, err := s.repo.GetPost(postID)
 	//             // if err != nil {
 	//             //     continue // Post doesn't exist, nothing to do
 	//             // }
 	//             // post.PublishedAt = time.Time{} // Zero value = unpublished
 	//             // post.UpdatedAt = commitTime
-	//             // err = s.postRepository.UpsertPost(post)
+	//             // err = s.repo.UpsertPost(post)
 	//             // if err != nil {
 	//             //     return fmt.Errorf("failed to unpublish post %s: %w", postID, err)
 	//             // }
@@ -151,7 +154,7 @@ func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo str
 	//             // htmlPath := storeHTMLToFile(postID, htmlContent)
 	//
 	//             // TODO: Get or create post
-	//             // post, err := s.postRepository.GetPost(postID)
+	//             // post, err := s.repo.GetPost(postID)
 	//             // if err != nil {
 	//             //     // Post doesn't exist, create new one
 	//             //     post = &domain.Post{
@@ -171,7 +174,7 @@ func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo str
 	//             //     post.PublishedAt = commitTime
 	//             // }
 	//             //
-	//             // err = s.postRepository.UpsertPost(post)
+	//             // err = s.repo.UpsertPost(post)
 	//             // if err != nil {
 	//             //     return fmt.Errorf("failed to upsert post %s: %w", postID, err)
 	//             // }
@@ -290,14 +293,14 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 		wg.Go(func() {
 			// Use the service's lifecycle context for cancellation
 			// TODO: Fetch existing post and unset PublishedAt
-			// post, err := s.postRepository.GetPost(capturedPostID)
+			// post, err := s.repo.GetPost(capturedPostID)
 			// if err != nil {
 			//     // Post doesn't exist, nothing to do
 			//     return
 			// }
 			// post.PublishedAt = time.Time{} // Zero value = unpublished
 			// post.UpdatedAt = capturedCommitTime
-			// err = s.postRepository.UpsertPost(post)
+			// err = s.repo.UpsertPost(post)
 			// if err != nil {
 			//     // Log error but don't fail the whole batch
 			//     log.Error().Err(err).Str("postID", capturedPostID).Msg("Failed to unpublish post")
@@ -418,7 +421,7 @@ func (s *PostService) processPostFile(
 	//     post.PublishedAt = time.Time{} // Zero value = unpublished
 	// }
 	//
-	// err = s.postRepository.UpsertPost(post)
+	// err = s.repo.UpsertPost(post)
 	// if err != nil {
 	//     if ctx.Err() != nil {
 	//         // Context was cancelled
