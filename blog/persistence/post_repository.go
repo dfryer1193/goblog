@@ -1,8 +1,10 @@
 package persistence
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/dfryer1193/goblog/blog/domain"
 	"github.com/jmoiron/sqlx"
@@ -130,6 +132,27 @@ func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 	return post, nil
 }
 
+const getLatestUpdatedTimeQuery = `
+		SELECT MAX(updated_at) FROM posts
+`
+
+// GetLatestUpdatedTime returns the latest updated_at time across all posts
+func (r *SQLitePostRepository) GetLatestUpdatedTime() (time.Time, error) {
+	query := getLatestUpdatedTimeQuery
+
+	var latestUpdated sql.NullTime
+	err := r.db.Get(&latestUpdated, query)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get latest updated time: %w", err)
+	}
+
+	if !latestUpdated.Valid {
+		return time.Time{}, nil
+	}
+
+	return latestUpdated.Time, nil
+}
+
 const listPublishedPostsQuery = `
 		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
 		FROM posts
@@ -191,4 +214,35 @@ func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.
 	}
 
 	return posts, nil
+}
+
+const publishPostQuery = `
+		UPDATE posts
+		SET published_at = ?, updated_at = ?
+		WHERE id = ?
+`
+
+// Publish sets the published_at timestamp for a post
+func (r *SQLitePostRepository) Publish(ctx context.Context, postID string) error {
+	if postID == "" {
+		return fmt.Errorf("post ID cannot be empty")
+	}
+
+	// Check if post exists
+	_, err := r.GetPost(postID)
+	if err != nil {
+		return fmt.Errorf("post not found: %w", err)
+	}
+
+	// Get current time
+	now := time.Now().UTC()
+
+	// Update post
+	query := publishPostQuery
+	_, err = r.db.ExecContext(ctx, query, now, now, postID)
+	if err != nil {
+		return fmt.Errorf("failed to publish post: %w", err)
+	}
+
+	return nil
 }

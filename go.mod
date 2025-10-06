@@ -1,9 +1,10 @@
 module github.com/dfryer1193/goblog
 
-go 1.24.0
+go 1.25.1
 
 require (
 	github.com/dfryer1193/mjolnir v1.2.1
+	github.com/dfryer1193/mjolnir/utils/set v0.0.0-20250926234814-9cb4c9f21288
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/google/go-github/v75 v75.0.0
 	github.com/jmoiron/sqlx v1.4.0

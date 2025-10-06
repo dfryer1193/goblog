@@ -2,18 +2,19 @@ package application
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/dfryer1193/goblog/blog/domain"
+	"github.com/dfryer1193/mjolnir/utils/set"
 	"github.com/google/go-github/v75/github"
 )
 
 type PostService struct {
 	// TODO: Add dependencies like PostRepository, GitHub client, etc.
-	// githubClient *github.Client
-	// repoOwner string
-	// repoName string
+	githubClient *github.Client
 
 	// Service lifecycle context - cancelled when Close() is called
 	ctx    context.Context
@@ -24,12 +25,20 @@ type PostService struct {
 }
 
 func NewPostService(repo domain.PostRepository) *PostService {
+	authToken := os.Getenv("GITHUB_TOKEN")
+	ghClient := github.NewClient(nil)
+	if authToken != "" {
+		ghClient = ghClient.WithAuthToken(authToken)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
+	wg := sync.WaitGroup{}
 	return &PostService{
-		ctx:    ctx,
-		cancel: cancel,
-		wg:     &sync.WaitGroup{},
-		repo:   repo,
+		githubClient: ghClient,
+		ctx:          ctx,
+		cancel:       cancel,
+		wg:           &wg,
+		repo:         repo,
 	}
 }
 
@@ -44,146 +53,140 @@ func (s *PostService) Close() error {
 // SyncRepositoryChanges syncs posts from recent commits across all branches
 // This catches any changes that happened while the server was offline
 func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo string, since time.Time) error {
-	// TODO: Get the last sync time from database or use a reasonable default (e.g., 24 hours ago)
-	// if since.IsZero() {
-	//     since = time.Now().Add(-24 * time.Hour)
-	// }
+	lastUpdated, err := s.repo.GetLatestUpdatedTime()
+	if err != nil {
+		return err
+	}
 
-	// TODO: List all branches in the repository
 	// GET /repos/{owner}/{repo}/branches
-	// branches, err := s.githubClient.Repositories.ListBranches(ctx, owner, repo, &github.BranchListOptions{
-	//     ListOptions: github.ListOptions{PerPage: 100},
-	// })
-	// if err != nil {
-	//     return fmt.Errorf("failed to list branches: %w", err)
-	// }
+	branches, resp, err := s.githubClient.Repositories.ListBranches(ctx, owner, repo, &github.BranchListOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list branches: %w", err)
+	}
 
-	// TODO: For each branch, get recent commits that touch the posts/ directory
-	// for _, branch := range branches {
-	//     branchName := branch.GetName()
-	//     isMainBranch := branchName == "main" || branchName == "master"
-	//
-	//     // Get commits since the last sync time
-	//     // GET /repos/{owner}/{repo}/commits?sha={branch}&since={since}&path=posts
-	//     commits, err := s.githubClient.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{
-	//         SHA:   branchName,
-	//         Since: since,
-	//         Path:  "posts",
-	//         ListOptions: github.ListOptions{PerPage: 100},
-	//     })
-	//     if err != nil {
-	//         return fmt.Errorf("failed to list commits for branch %s: %w", branchName, err)
-	//     }
-	//
-	//     if len(commits) == 0 {
-	//         continue // No changes in this branch
-	//     }
-	//
-	//     // TODO: For each commit, get the files that were changed
-	//     for _, commit := range commits {
-	//         commitSHA := commit.GetSHA()
-	//         commitTime := commit.GetCommit().GetCommitter().GetDate().Time
-	//
-	//         // Get the commit details to see which files were changed
-	//         // GET /repos/{owner}/{repo}/commits/{sha}
-	//         commitDetail, err := s.githubClient.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
-	//         if err != nil {
-	//             return fmt.Errorf("failed to get commit %s: %w", commitSHA, err)
-	//         }
-	//
-	//         // Track changed and deleted files in this commit
-	//         changedFiles := make(map[string]bool)
-	//         deletedFiles := make(map[string]bool)
-	//
-	//         for _, file := range commitDetail.Files {
-	//             filePath := file.GetFilename()
-	//             if !isPostFile(filePath) {
-	//                 continue
-	//             }
-	//
-	//             status := file.GetStatus()
-	//             if status == "removed" {
-	//                 deletedFiles[filePath] = true
-	//             } else {
-	//                 // "added", "modified", "renamed", etc.
-	//                 changedFiles[filePath] = true
-	//             }
-	//         }
-	//
-	//         // Process deleted files - unset PublishedAt
-	//         for filePath := range deletedFiles {
-	//             postID := extractPostID(filePath)
-	//             if postID == "" {
-	//                 continue
-	//             }
-	//
-	//             // TODO: Fetch existing post and unset PublishedAt
-	//             // post, err := s.repo.GetPost(postID)
-	//             // if err != nil {
-	//             //     continue // Post doesn't exist, nothing to do
-	//             // }
-	//             // post.PublishedAt = time.Time{} // Zero value = unpublished
-	//             // post.UpdatedAt = commitTime
-	//             // err = s.repo.UpsertPost(post)
-	//             // if err != nil {
-	//             //     return fmt.Errorf("failed to unpublish post %s: %w", postID, err)
-	//             // }
-	//         }
-	//
-	//         // Process changed files
-	//         for filePath := range changedFiles {
-	//             postID := extractPostID(filePath)
-	//             if postID == "" {
-	//                 continue
-	//             }
-	//
-	//             // TODO: Fetch the file content from the repository
-	//             // content, err := s.fetchFileContent(ctx, owner, repo, filePath, branchName)
-	//             // if err != nil {
-	//             //     return fmt.Errorf("failed to fetch file %s: %w", filePath, err)
-	//             // }
-	//
-	//             // TODO: Parse markdown and extract title, snippet
-	//             // title := extractTitle(content, filePath)
-	//             // snippet := extractSnippet(content)
-	//
-	//             // TODO: Convert markdown to HTML
-	//             // htmlContent := convertMarkdownToHTML(content)
-	//
-	//             // TODO: Store HTML content on filesystem
-	//             // htmlPath := storeHTMLToFile(postID, htmlContent)
-	//
-	//             // TODO: Get or create post
-	//             // post, err := s.repo.GetPost(postID)
-	//             // if err != nil {
-	//             //     // Post doesn't exist, create new one
-	//             //     post = &domain.Post{
-	//             //         ID:        postID,
-	//             //         CreatedAt: commitTime,
-	//             //     }
-	//             // }
-	//             //
-	//             // // Update post fields
-	//             // post.Title = title
-	//             // post.Snippet = snippet
-	//             // post.HTMLPath = htmlPath
-	//             // post.UpdatedAt = commitTime
-	//             //
-	//             // // Set PublishedAt only if this is the main branch
-	//             // if isMainBranch {
-	//             //     post.PublishedAt = commitTime
-	//             // }
-	//             //
-	//             // err = s.repo.UpsertPost(post)
-	//             // if err != nil {
-	//             //     return fmt.Errorf("failed to upsert post %s: %w", postID, err)
-	//             // }
-	//         }
-	//     }
-	// }
+	for _, branch := range branches {
+		branchName := branch.GetName()
+		isMainBranch := branchName == "main" || branchName == "master"
 
-	// TODO: Update last sync time in database or persistent storage
-	// s.updateLastSyncTime(time.Now())
+		// Get commits since the last sync time
+		// GET /repos/{owner}/{repo}/commits?sha={branch}&since={since}&path=posts
+		commits, _, err := s.githubClient.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{
+			SHA:         branchName,
+			Since:       since,
+			Path:        "posts",
+			ListOptions: github.ListOptions{PerPage: 100},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list commits for branch %s: %w", branchName, err)
+		}
+
+		if len(commits) == 0 {
+			continue // No changes in this branch
+		}
+
+		for _, commit := range commits {
+			commitSHA := commit.GetSHA()
+			commitTime := commit.GetCommit().GetCommitter().GetDate().Time
+
+			// Get the commit details to see which files were changed
+			// GET /repos/{owner}/{repo}/commits/{sha}
+			commitDetail, _, err := s.githubClient.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
+			if err != nil {
+				return fmt.Errorf("failed to get commit %s: %w", commitSHA, err)
+			}
+
+			// Track changed and deleted files in this commit
+			changedFiles := set.New[string]()
+			deletedFiles := set.New[string]()
+
+			for _, file := range commitDetail.Files {
+				filePath := file.GetFilename()
+				if !isPostFile(filePath) {
+					continue
+				}
+
+				status := file.GetStatus()
+				if status == "removed" {
+					deletedFiles.Add(filePath)
+				} else {
+					// "added", "modified", "renamed", etc.
+					changedFiles.Add(filePath)
+				}
+			}
+
+			// Process deleted files - unset PublishedAt
+			for filePath := range deletedFiles {
+				postID := extractPostID(filePath)
+				if postID == "" {
+					continue
+				}
+
+				// TODO: Fetch existing post and unset PublishedAt
+				// post, err := s.repo.GetPost(postID)
+				// if err != nil {
+				//     continue // Post doesn't exist, nothing to do
+				// }
+				// post.PublishedAt = time.Time{} // Zero value = unpublished
+				// post.UpdatedAt = commitTime
+				// err = s.repo.UpsertPost(post)
+				// if err != nil {
+				//     return fmt.Errorf("failed to unpublish post %s: %w", postID, err)
+				// }
+			}
+
+			// Process changed files
+			for filePath := range changedFiles {
+				postID := extractPostID(filePath)
+				if postID == "" {
+					continue
+				}
+
+				// TODO: Fetch the file content from the repository
+				// content, err := s.fetchFileContent(ctx, owner, repo, filePath, branchName)
+				// if err != nil {
+				//     return fmt.Errorf("failed to fetch file %s: %w", filePath, err)
+				// }
+
+				// TODO: Parse markdown and extract title, snippet
+				// title := extractTitle(content, filePath)
+				// snippet := extractSnippet(content)
+
+				// TODO: Convert markdown to HTML
+				// htmlContent := convertMarkdownToHTML(content)
+
+				// TODO: Store HTML content on filesystem
+				// htmlPath := storeHTMLToFile(postID, htmlContent)
+
+				// TODO: Get or create post
+				// post, err := s.repo.GetPost(postID)
+				// if err != nil {
+				//     // Post doesn't exist, create new one
+				//     post = &domain.Post{
+				//         ID:        postID,
+				//         CreatedAt: commitTime,
+				//     }
+				// }
+				//
+				// // Update post fields
+				// post.Title = title
+				// post.Snippet = snippet
+				// post.HTMLPath = htmlPath
+				// post.UpdatedAt = commitTime
+				//
+				// // Set PublishedAt only if this is the main branch
+				// if isMainBranch {
+				//     post.PublishedAt = commitTime
+				// }
+				//
+				// err = s.repo.UpsertPost(post)
+				// if err != nil {
+				//     return fmt.Errorf("failed to upsert post %s: %w", postID, err)
+				// }
+			}
+		}
+	}
 
 	return nil
 }

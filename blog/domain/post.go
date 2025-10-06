@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Post represents a blog post
 // A post is created from a Markdown file, and the resulting HTML is stored at HTMLPath.
@@ -18,5 +21,9 @@ type Post struct {
 type PostRepository interface {
 	UpsertPost(p *Post) error
 	GetPost(id string) (*Post, error)
+	GetLatestUpdatedTime() (time.Time, error)
 	ListPublishedPosts(limit, offset int) ([]*Post, error)
+
+	Publish(ctx context.Context, postID string) error
+	Unpublish(ctx context.Context, postID string) error
 }
