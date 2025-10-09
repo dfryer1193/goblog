@@ -3,18 +3,16 @@ package application
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/dfryer1193/goblog/blog/domain"
-	"github.com/dfryer1193/mjolnir/utils/set"
 	"github.com/google/go-github/v75/github"
 )
 
 type PostService struct {
-	// TODO: Add dependencies like PostRepository, GitHub client, etc.
 	githubClient *github.Client
+	markdown     MarkdownRenderer
 
 	// Service lifecycle context - cancelled when Close() is called
 	ctx    context.Context
@@ -24,17 +22,12 @@ type PostService struct {
 	repo domain.PostRepository
 }
 
-func NewPostService(repo domain.PostRepository) *PostService {
-	authToken := os.Getenv("GITHUB_TOKEN")
-	ghClient := github.NewClient(nil)
-	if authToken != "" {
-		ghClient = ghClient.WithAuthToken(authToken)
-	}
-
+func NewPostService(repo domain.PostRepository, ghClient *github.Client, markdown MarkdownRenderer) *PostService {
 	ctx, cancel := context.WithCancel(context.Background())
 	wg := sync.WaitGroup{}
 	return &PostService{
 		githubClient: ghClient,
+		markdown:     markdown,
 		ctx:          ctx,
 		cancel:       cancel,
 		wg:           &wg,
@@ -53,141 +46,23 @@ func (s *PostService) Close() error {
 // SyncRepositoryChanges syncs posts from recent commits across all branches
 // This catches any changes that happened while the server was offline
 func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo string, since time.Time) error {
-	lastUpdated, err := s.repo.GetLatestUpdatedTime()
+	branches, resp, err := s.githubClient.Repositories.ListBranches(ctx, "owner", "repo", nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to retrieve branches for %s/%s: %w", owner, repo, err)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("failed to retrieve branches fro %s/%s with status code %d", owner, repo, resp.StatusCode)
 	}
 
-	// GET /repos/{owner}/{repo}/branches
-	branches, resp, err := s.githubClient.Repositories.ListBranches(ctx, owner, repo, &github.BranchListOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list branches: %w", err)
-	}
-
-	for _, branch := range branches {
-		branchName := branch.GetName()
-		isMainBranch := branchName == "main" || branchName == "master"
-
-		// Get commits since the last sync time
-		// GET /repos/{owner}/{repo}/commits?sha={branch}&since={since}&path=posts
-		commits, _, err := s.githubClient.Repositories.ListCommits(ctx, owner, repo, &github.CommitsListOptions{
-			SHA:         branchName,
-			Since:       since,
-			Path:        "posts",
-			ListOptions: github.ListOptions{PerPage: 100},
+	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
+	for i := resp.NextPage; i <= resp.LastPage; i++ {
+		s.processBranches(branches)
+		branches, resp, err = s.githubClient.Repositories.ListBranches(ctx, "owner", "repo", &github.BranchListOptions{
+			ListOptions: github.ListOptions{
+				Page: i,
+			},
 		})
-		if err != nil {
-			return fmt.Errorf("failed to list commits for branch %s: %w", branchName, err)
-		}
-
-		if len(commits) == 0 {
-			continue // No changes in this branch
-		}
-
-		for _, commit := range commits {
-			commitSHA := commit.GetSHA()
-			commitTime := commit.GetCommit().GetCommitter().GetDate().Time
-
-			// Get the commit details to see which files were changed
-			// GET /repos/{owner}/{repo}/commits/{sha}
-			commitDetail, _, err := s.githubClient.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
-			if err != nil {
-				return fmt.Errorf("failed to get commit %s: %w", commitSHA, err)
-			}
-
-			// Track changed and deleted files in this commit
-			changedFiles := set.New[string]()
-			deletedFiles := set.New[string]()
-
-			for _, file := range commitDetail.Files {
-				filePath := file.GetFilename()
-				if !isPostFile(filePath) {
-					continue
-				}
-
-				status := file.GetStatus()
-				if status == "removed" {
-					deletedFiles.Add(filePath)
-				} else {
-					// "added", "modified", "renamed", etc.
-					changedFiles.Add(filePath)
-				}
-			}
-
-			// Process deleted files - unset PublishedAt
-			for filePath := range deletedFiles {
-				postID := extractPostID(filePath)
-				if postID == "" {
-					continue
-				}
-
-				// TODO: Fetch existing post and unset PublishedAt
-				// post, err := s.repo.GetPost(postID)
-				// if err != nil {
-				//     continue // Post doesn't exist, nothing to do
-				// }
-				// post.PublishedAt = time.Time{} // Zero value = unpublished
-				// post.UpdatedAt = commitTime
-				// err = s.repo.UpsertPost(post)
-				// if err != nil {
-				//     return fmt.Errorf("failed to unpublish post %s: %w", postID, err)
-				// }
-			}
-
-			// Process changed files
-			for filePath := range changedFiles {
-				postID := extractPostID(filePath)
-				if postID == "" {
-					continue
-				}
-
-				// TODO: Fetch the file content from the repository
-				// content, err := s.fetchFileContent(ctx, owner, repo, filePath, branchName)
-				// if err != nil {
-				//     return fmt.Errorf("failed to fetch file %s: %w", filePath, err)
-				// }
-
-				// TODO: Parse markdown and extract title, snippet
-				// title := extractTitle(content, filePath)
-				// snippet := extractSnippet(content)
-
-				// TODO: Convert markdown to HTML
-				// htmlContent := convertMarkdownToHTML(content)
-
-				// TODO: Store HTML content on filesystem
-				// htmlPath := storeHTMLToFile(postID, htmlContent)
-
-				// TODO: Get or create post
-				// post, err := s.repo.GetPost(postID)
-				// if err != nil {
-				//     // Post doesn't exist, create new one
-				//     post = &domain.Post{
-				//         ID:        postID,
-				//         CreatedAt: commitTime,
-				//     }
-				// }
-				//
-				// // Update post fields
-				// post.Title = title
-				// post.Snippet = snippet
-				// post.HTMLPath = htmlPath
-				// post.UpdatedAt = commitTime
-				//
-				// // Set PublishedAt only if this is the main branch
-				// if isMainBranch {
-				//     post.PublishedAt = commitTime
-				// }
-				//
-				// err = s.repo.UpsertPost(post)
-				// if err != nil {
-				//     return fmt.Errorf("failed to upsert post %s: %w", postID, err)
-				// }
-			}
-		}
 	}
-
 	return nil
 }
 
@@ -295,22 +170,8 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 
 		wg.Go(func() {
 			// Use the service's lifecycle context for cancellation
-			// TODO: Fetch existing post and unset PublishedAt
-			// post, err := s.repo.GetPost(capturedPostID)
-			// if err != nil {
-			//     // Post doesn't exist, nothing to do
-			//     return
-			// }
-			// post.PublishedAt = time.Time{} // Zero value = unpublished
-			// post.UpdatedAt = capturedCommitTime
-			// err = s.repo.UpsertPost(post)
-			// if err != nil {
-			//     // Log error but don't fail the whole batch
-			//     log.Error().Err(err).Str("postID", capturedPostID).Msg("Failed to unpublish post")
-			// }
-
-			_ = capturedPostID
-			_ = capturedCommitTime
+			// TODO: Log error
+			s.repo.Unpublish(capturedPostID)
 		})
 	}
 
