@@ -88,20 +88,8 @@ func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 		return nil, fmt.Errorf("post ID cannot be empty")
 	}
 
-	query := getPostQuery
-
-	// Use intermediate struct with NullTime for scanning
-	var row struct {
-		ID          string       `db:"id"`
-		Title       string       `db:"title"`
-		Snippet     string       `db:"snippet"`
-		HTMLPath    string       `db:"html_path"`
-		UpdatedAt   sql.NullTime `db:"updated_at"`
-		PublishedAt sql.NullTime `db:"published_at"`
-		CreatedAt   sql.NullTime `db:"created_at"`
-	}
-
-	err := r.db.Get(&row, query, id)
+	var row postRow
+	err := r.db.Get(&row, getPostQuery, id)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("post not found: %s", id)
@@ -111,25 +99,7 @@ func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
 
-	// Convert to domain.Post
-	post := &domain.Post{
-		ID:       row.ID,
-		Title:    row.Title,
-		Snippet:  row.Snippet,
-		HTMLPath: row.HTMLPath,
-	}
-
-	if row.UpdatedAt.Valid {
-		post.UpdatedAt = row.UpdatedAt.Time
-	}
-	if row.PublishedAt.Valid {
-		post.PublishedAt = row.PublishedAt.Time
-	}
-	if row.CreatedAt.Valid {
-		post.CreatedAt = row.CreatedAt.Time
-	}
-
-	return post, nil
+	return row.toDomain(), nil
 }
 
 const getLatestUpdatedTimeQuery = `
@@ -171,20 +141,8 @@ func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.
 		offset = 0
 	}
 
-	query := listPublishedPostsQuery
-
-	// Use intermediate struct with NullTime for scanning
-	var rows []struct {
-		ID          string       `db:"id"`
-		Title       string       `db:"title"`
-		Snippet     string       `db:"snippet"`
-		HTMLPath    string       `db:"html_path"`
-		UpdatedAt   sql.NullTime `db:"updated_at"`
-		PublishedAt sql.NullTime `db:"published_at"`
-		CreatedAt   sql.NullTime `db:"created_at"`
-	}
-
-	err := r.db.Select(&rows, query, limit, offset)
+	var rows []postRow
+	err := r.db.Select(&rows, listPublishedPostsQuery, limit, offset)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to list published posts: %w", err)
@@ -193,24 +151,7 @@ func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.
 	// Convert to domain.Post slice
 	posts := make([]*domain.Post, 0, len(rows))
 	for _, row := range rows {
-		post := &domain.Post{
-			ID:       row.ID,
-			Title:    row.Title,
-			Snippet:  row.Snippet,
-			HTMLPath: row.HTMLPath,
-		}
-
-		if row.UpdatedAt.Valid {
-			post.UpdatedAt = row.UpdatedAt.Time
-		}
-		if row.PublishedAt.Valid {
-			post.PublishedAt = row.PublishedAt.Time
-		}
-		if row.CreatedAt.Valid {
-			post.CreatedAt = row.CreatedAt.Time
-		}
-
-		posts = append(posts, post)
+		posts = append(posts, row.toDomain())
 	}
 
 	return posts, nil
@@ -222,27 +163,75 @@ const publishPostQuery = `
 		WHERE id = ?
 `
 
+const unpublishPostQuery = `
+		UPDATE posts
+		SET published_at = NULL, updated_at = ?
+		WHERE id = ?
+`
+
 // Publish sets the published_at timestamp for a post
 func (r *SQLitePostRepository) Publish(ctx context.Context, postID string) error {
 	if postID == "" {
 		return fmt.Errorf("post ID cannot be empty")
 	}
 
-	// Check if post exists
-	_, err := r.GetPost(postID)
-	if err != nil {
-		return fmt.Errorf("post not found: %w", err)
-	}
-
-	// Get current time
 	now := time.Now().UTC()
-
-	// Update post
 	query := publishPostQuery
-	_, err = r.db.ExecContext(ctx, query, now, now, postID)
+	_, err := r.db.ExecContext(ctx, query, now, now, postID)
 	if err != nil {
 		return fmt.Errorf("failed to publish post: %w", err)
 	}
 
 	return nil
+}
+
+// Unpublish sets the published_at timestamp to NULL for a post
+func (r *SQLitePostRepository) Unpublish(postID string) error {
+	if postID == "" {
+		return fmt.Errorf("post ID cannot be empty")
+	}
+
+	now := time.Now().UTC()
+	query := unpublishPostQuery
+	_, err := r.db.Exec(query, now, postID)
+	if err != nil {
+		return fmt.Errorf("failed to unpublish post: %w", err)
+	}
+
+	return nil
+}
+
+// postRow is a private struct used to scan database rows
+// It uses sql.NullTime to handle nullable timestamp fields
+// and provides a method to convert to the domain.Post model
+type postRow struct {
+	ID          string       `db:"id"`
+	Title       string       `db:"title"`
+	Snippet     string       `db:"snippet"`
+	HTMLPath    string       `db:"html_path"`
+	UpdatedAt   sql.NullTime `db:"updated_at"`
+	PublishedAt sql.NullTime `db:"published_at"`
+	CreatedAt   sql.NullTime `db:"created_at"`
+}
+
+// toDomain converts a postRow to a domain.Post, handling nullable times
+func (pr *postRow) toDomain() *domain.Post {
+	post := &domain.Post{
+		ID:       pr.ID,
+		Title:    pr.Title,
+		Snippet:  pr.Snippet,
+		HTMLPath: pr.HTMLPath,
+	}
+
+	if pr.UpdatedAt.Valid {
+		post.UpdatedAt = pr.UpdatedAt.Time
+	}
+	if pr.PublishedAt.Valid {
+		post.PublishedAt = pr.PublishedAt.Time
+	}
+	if pr.CreatedAt.Valid {
+		post.CreatedAt = pr.CreatedAt.Time
+	}
+
+	return post
 }

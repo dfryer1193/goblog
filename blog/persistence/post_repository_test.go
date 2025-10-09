@@ -10,42 +10,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// setupTestDB creates an in-memory SQLite database for testing
-func setupTestDB(t *testing.T) *sql.DB {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	// Create the posts table
-	_, err = db.Exec(`
-		CREATE TABLE posts (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			snippet TEXT NOT NULL,
-			html_path TEXT NOT NULL,
-			updated_at TIMESTAMP,
-			published_at TIMESTAMP,
-			created_at TIMESTAMP NOT NULL
-		)
-	`)
-	if err != nil {
-		t.Fatalf("failed to create posts table: %v", err)
-	}
-
-	// Create index
-	_, err = db.Exec(`
-		CREATE INDEX idx_posts_published_at
-		ON posts(published_at DESC)
-		WHERE published_at IS NOT NULL
-	`)
-	if err != nil {
-		t.Fatalf("failed to create index: %v", err)
-	}
-
-	return db
-}
-
 func TestNewPostRepository(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -480,4 +444,40 @@ func TestPostRepository_ListPublishedPosts_NegativeOffset(t *testing.T) {
 
 func TestPostRepository_InterfaceCompliance(t *testing.T) {
 	var _ domain.PostRepository = (*SQLitePostRepository)(nil)
+}
+
+// setupTestDB creates an in-memory SQLite database for testing
+func setupTestDB(t *testing.T) *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+
+	// Create the posts table
+	_, err = db.Exec(`
+		CREATE TABLE posts (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			snippet TEXT NOT NULL,
+			html_path TEXT NOT NULL,
+			updated_at TIMESTAMP,
+			published_at TIMESTAMP,
+			created_at TIMESTAMP NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create posts table: %v", err)
+	}
+
+	// Create index
+	_, err = db.Exec(`
+		CREATE INDEX idx_posts_published_at
+		ON posts(published_at DESC)
+		WHERE published_at IS NOT NULL
+	`)
+	if err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	return db
 }
