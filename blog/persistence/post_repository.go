@@ -10,6 +10,8 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+var _ domain.PostRepository = (*SQLitePostRepository)(nil)
+
 // SQLitePostRepository implements domain.PostRepository using SQL database (SQLite)
 type SQLitePostRepository struct {
 	db *sqlx.DB
@@ -36,7 +38,7 @@ const upsertPostQuery = `
 
 // UpsertPost inserts or updates a post in the database
 // Uses INSERT ... ON CONFLICT for SQLite (requires SQLite 3.24.0+)
-func (r *SQLitePostRepository) UpsertPost(p *domain.Post) error {
+func (r *SQLitePostRepository) UpsertPost(ctx context.Context, p *domain.Post) error {
 	if p == nil {
 		return fmt.Errorf("post cannot be nil")
 	}
@@ -59,7 +61,7 @@ func (r *SQLitePostRepository) UpsertPost(p *domain.Post) error {
 
 	query := upsertPostQuery
 
-	_, err := r.db.Exec(query,
+	_, err := r.db.ExecContext(ctx, query,
 		p.ID,
 		p.Title,
 		p.Snippet,
@@ -83,13 +85,13 @@ const getPostQuery = `
 `
 
 // GetPost retrieves a single post by ID
-func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
+func (r *SQLitePostRepository) GetPost(ctx context.Context, id string) (*domain.Post, error) {
 	if id == "" {
 		return nil, fmt.Errorf("post ID cannot be empty")
 	}
 
 	var row postRow
-	err := r.db.Get(&row, getPostQuery, id)
+	err := r.db.GetContext(ctx, &row, getPostQuery, id)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("post not found: %s", id)
@@ -103,16 +105,19 @@ func (r *SQLitePostRepository) GetPost(id string) (*domain.Post, error) {
 }
 
 const getLatestUpdatedTimeQuery = `
-		SELECT MAX(updated_at) FROM posts
+		SELECT updated_at FROM posts WHERE updated_at IS NOT NULL ORDER BY updated_at DESC LIMIT 1
 `
 
 // GetLatestUpdatedTime returns the latest updated_at time across all posts
-func (r *SQLitePostRepository) GetLatestUpdatedTime() (time.Time, error) {
+func (r *SQLitePostRepository) GetLatestUpdatedTime(ctx context.Context) (time.Time, error) {
 	query := getLatestUpdatedTimeQuery
 
 	var latestUpdated sql.NullTime
-	err := r.db.Get(&latestUpdated, query)
+	err := r.db.GetContext(ctx, &latestUpdated, query)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return time.Time{}, nil
+		}
 		return time.Time{}, fmt.Errorf("failed to get latest updated time: %w", err)
 	}
 
@@ -133,7 +138,7 @@ const listPublishedPostsQuery = `
 
 // ListPublishedPosts retrieves published posts ordered by publish date descending
 // Only returns posts where published_at is not NULL
-func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.Post, error) {
+func (r *SQLitePostRepository) ListPublishedPosts(ctx context.Context, limit, offset int) ([]*domain.Post, error) {
 	if limit <= 0 {
 		limit = 10 // Default limit
 	}
@@ -142,7 +147,7 @@ func (r *SQLitePostRepository) ListPublishedPosts(limit, offset int) ([]*domain.
 	}
 
 	var rows []postRow
-	err := r.db.Select(&rows, listPublishedPostsQuery, limit, offset)
+	err := r.db.SelectContext(ctx, &rows, listPublishedPostsQuery, limit, offset)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to list published posts: %w", err)
@@ -186,14 +191,14 @@ func (r *SQLitePostRepository) Publish(ctx context.Context, postID string) error
 }
 
 // Unpublish sets the published_at timestamp to NULL for a post
-func (r *SQLitePostRepository) Unpublish(postID string) error {
+func (r *SQLitePostRepository) Unpublish(ctx context.Context, postID string) error {
 	if postID == "" {
 		return fmt.Errorf("post ID cannot be empty")
 	}
 
 	now := time.Now().UTC()
 	query := unpublishPostQuery
-	_, err := r.db.Exec(query, now, postID)
+	_, err := r.db.ExecContext(ctx, query, now, postID)
 	if err != nil {
 		return fmt.Errorf("failed to unpublish post: %w", err)
 	}
