@@ -13,5 +13,6 @@ type SourceRepository interface {
 	GetCommitsSince(ctx context.Context, branchName string, since time.Time) ([]*github.RepositoryCommit, error)
 	GetCommit(ctx context.Context, sha string) (*github.RepositoryCommit, error)
 	ListBranches(ctx context.Context) ([]*github.Branch, error)
+	GetDefaultBranchName(ctx context.Context) (string, error)
 	GetRepoFullName() string
 }

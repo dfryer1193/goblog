@@ -70,3 +70,12 @@ func (g *GithubSourceRepository) ListBranches(ctx context.Context) ([]*github.Br
 func (g *GithubSourceRepository) GetRepoFullName() string {
 	return fmt.Sprintf("%s/%s", g.owner, g.gitRepo)
 }
+
+// GetDefaultBranchName fetches the repository metadata and returns the name of the default branch.
+func (g *GithubSourceRepository) GetDefaultBranchName(ctx context.Context) (string, error) {
+	repo, _, err := g.client.Repositories.Get(ctx, g.owner, g.gitRepo)
+	if err != nil {
+		return "", fmt.Errorf("github: failed to get repository info for %s/%s: %w", g.owner, g.gitRepo, err)
+	}
+	return repo.GetDefaultBranch(), nil
+}

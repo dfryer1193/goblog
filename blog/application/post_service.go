@@ -11,8 +11,9 @@ import (
 )
 
 type PostService struct {
-	sourceRepo domain.SourceRepository
-	markdown   MarkdownRenderer
+	sourceRepo     domain.SourceRepository
+	markdown       MarkdownRenderer
+	mainBranchName string
 
 	// Service lifecycle context - cancelled when Close() is called
 	ctx    context.Context
@@ -22,16 +23,17 @@ type PostService struct {
 	repo domain.PostRepository
 }
 
-func NewPostService(repo domain.PostRepository, sourceRepo domain.SourceRepository, markdown MarkdownRenderer) *PostService {
+func NewPostService(repo domain.PostRepository, sourceRepo domain.SourceRepository, markdown MarkdownRenderer, mainBranchName string) *PostService {
 	ctx, cancel := context.WithCancel(context.Background())
 	wg := sync.WaitGroup{}
 	return &PostService{
-		sourceRepo: sourceRepo,
-		markdown:   markdown,
-		ctx:        ctx,
-		cancel:     cancel,
-		wg:         &wg,
-		repo:       repo,
+		sourceRepo:     sourceRepo,
+		markdown:       markdown,
+		mainBranchName: mainBranchName,
+		ctx:            ctx,
+		cancel:         cancel,
+		wg:             &wg,
+		repo:           repo,
 	}
 }
 
@@ -176,7 +178,7 @@ func (s *PostService) dispatchPostRemovals(filesToRemove map[string]bool) {
 func (s *PostService) dispatchPostUpserts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch, latestCommitTime time.Time) {
 	repoFullName := s.sourceRepo.GetRepoFullName()
 	ref := "refs/heads/" + *branch.Name
-	isMainBranch := ref == "refs/heads/main" || ref == "refs/heads/master"
+	isMainBranch := ref == "refs/heads/"+s.mainBranchName
 
 	for path, commit := range filesToProcess {
 		postID := extractPostID(path)
@@ -234,7 +236,7 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 
 	// Get the ref (branch) being pushed to
 	ref := evt.GetRef()
-	isMainBranch := ref == "refs/heads/main" || ref == "refs/heads/master"
+	isMainBranch := ref == "refs/heads/"+s.mainBranchName
 
 	// Process all commits in the push to catch any changes to posts
 	commits := evt.GetCommits()
@@ -275,7 +277,7 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 					// Update the modified time but keep the original created time
 					info.modifiedAt = commitTime
 					changedFiles[file] = info
-				} else {
+			} else {
 					// File was modified but we didn't see it added in this push
 					// Use the commit time for both created and modified
 					changedFiles[file] = commitFileInfo{
@@ -356,7 +358,6 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 
 	return nil
 }
-
 // processPostFile processes a single post file asynchronously
 // This function respects context cancellation for graceful shutdown
 func (s *PostService) processPostFile(

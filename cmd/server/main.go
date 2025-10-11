@@ -46,10 +46,15 @@ func main() {
 	ghClient := github.NewClient(nil)
 	sourceRepo := gh.NewGithubSourceRepository(ghClient, ghOwner, ghRepo)
 
+	mainBranchName, err := sourceRepo.GetDefaultBranchName(context.Background())
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to get default branch name")
+	}
+
 	postRepo := persistence.NewPostRepository(dbConn)
 	markdownRenderer := placeholderMarkdownRenderer{}
 
-	postService := application.NewPostService(postRepo, sourceRepo, markdownRenderer)
+	postService := application.NewPostService(postRepo, sourceRepo, markdownRenderer, mainBranchName)
 	defer func() {
 		if err := postService.Close(); err != nil {
 			log.Error().Err(err).Msg("Failed to gracefully close post service")
