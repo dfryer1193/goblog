@@ -68,6 +68,7 @@ func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*githu
 	for _, b := range branches {
 		err := s.processBranch(lastUpdatedAt, b)
 		if err != nil {
+			// TODO: use zerolog to log error and continue to next branch
 			return err
 		}
 	}
@@ -76,37 +77,144 @@ func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*githu
 }
 
 func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Branch) error {
-	// TODO: Get commits from this branch that have happened since the last update
-	commits, resp, err := s.githubClient.Repositories.ListCommits(s.ctx, s.owner, s.gitRepo, &github.CommitsListOptions{
-		SHA:   *branch.Name,
-		Since: lastUpdatedAt,
-	})
-	// TODO: Make error handling more robust, including using zerolog
+	commits, err := s.sourceRepo.GetCommitsSince(s.ctx, *branch.Name, lastUpdatedAt)
 	if err != nil {
-		return fmt.Errorf("Failed to list commits since %s for branch %s", lastUpdatedAt.String(), *branch.Name)
-	}
-	if resp.Request.Response.StatusCode != 200 {
-		return fmt.Errorf("Got exceptional status code listing commits since %s for branch %s", lastUpdatedAt.String(), *branch.Name)
+		// TODO: use zerolog for error logging
+		return fmt.Errorf("failed to get commits for branch %s: %w", *branch.Name, err)
 	}
 
-	// TODO: Figure out the last update time for each changed post, then process each file. Capture the timestamp of the last commit the file was modified in and use it as the last updated time in the database
-	for _, commit := range commits {
-		fullCommit, resp, err := s.githubClient.Repositories.GetCommit(s.ctx, s.owner, s.gitRepo, *commit.SHA, nil)
-		if err != nil {
-			// Handle err
-		}
-		if resp.Response.StatusCode != 200 {
-			// Handle exceptional code
-		}
-
-		for _, f := range fullCommit.Files {
-			// TODO: Handle additions, modifications, and removals
-			_ = f // TODO: Remove this
-			// TODO: How do renames look in a commit? How should we handle renames?
-		}
+	if len(commits) == 0 {
+		return nil
 	}
+
+	filesToProcess, filesToRemove, err := s.analyzeCommitFiles(commits)
+	if err != nil {
+		// TODO: use zerolog for error logging
+		return fmt.Errorf("failed to analyze commits for branch %s: %w", *branch.Name, err)
+	}
+
+	s.dispatchPostRemovals(filesToRemove)
+
+	latestCommitTime := commits[0].GetCommit().GetAuthor().GetDate().Time
+	s.dispatchPostUpserts(filesToProcess, branch, latestCommitTime)
 
 	return nil
+}
+
+// analyzeCommitFiles iterates through commits to determine which files were changed and which were removed.
+func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (map[string]*github.RepositoryCommit, map[string]bool, error) {
+	filesToProcess := make(map[string]*github.RepositoryCommit)
+	filesToRemove := make(map[string]bool)
+
+	for _, commitSummary := range commits {
+		fullCommit, err := s.sourceRepo.GetCommit(s.ctx, *commitSummary.SHA)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get full commit %s: %w", *commitSummary.SHA, err)
+		}
+
+		for _, file := range fullCommit.Files {
+			handleFile := func(path string, status string, previousPath string) {
+				isCurrentPost := isPostFile(path)
+				isPreviousPost := isPostFile(previousPath)
+
+				if !isCurrentPost && !isPreviousPost {
+					return
+				}
+
+				switch status {
+				case "added", "modified":
+					if isCurrentPost {
+						if _, exists := filesToProcess[path]; !exists {
+							filesToProcess[path] = fullCommit
+						}
+						delete(filesToRemove, path)
+					}
+				case "removed":
+					if isCurrentPost {
+						if _, exists := filesToProcess[path]; !exists {
+							filesToRemove[path] = true
+						}
+						delete(filesToProcess, path)
+					}
+				case "renamed":
+					if isPreviousPost {
+						if _, exists := filesToProcess[previousPath]; !exists {
+							filesToRemove[previousPath] = true
+						}
+						delete(filesToProcess, previousPath)
+					}
+					if isCurrentPost {
+						if _, exists := filesToProcess[path]; !exists {
+							filesToProcess[path] = fullCommit
+						}
+						delete(filesToRemove, path)
+					}
+				}
+			}
+			handleFile(file.GetFilename(), file.GetStatus(), file.GetPreviousFilename())
+		}
+	}
+	return filesToProcess, filesToRemove, nil
+}
+
+// dispatchPostRemovals spawns goroutines to unpublish posts that were removed.
+func (s *PostService) dispatchPostRemovals(filesToRemove map[string]bool) {
+	for path := range filesToRemove {
+		postID := extractPostID(path)
+		if postID == "" {
+			continue
+		}
+		capturedPostID := postID
+		s.wg.Go(func() {
+			// TODO: Log error from Unpublish
+			s.repo.Unpublish(capturedPostID)
+		})
+	}
+}
+
+// dispatchPostUpserts spawns goroutines to create or update posts that were changed.
+func (s *PostService) dispatchPostUpserts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch, latestCommitTime time.Time) {
+	repoFullName := s.sourceRepo.GetRepoFullName()
+	ref := "refs/heads/" + *branch.Name
+	isMainBranch := ref == "refs/heads/main" || ref == "refs/heads/master"
+
+	for path, commit := range filesToProcess {
+		postID := extractPostID(path)
+		if postID == "" {
+			continue
+		}
+
+		modifiedAt := commit.GetCommit().GetAuthor().GetDate().Time
+
+		existingPost, err := s.repo.GetPostByID(s.ctx, postID)
+		createdAt := modifiedAt
+		if err == nil && existingPost != nil {
+			createdAt = existingPost.CreatedAt
+		}
+
+		fileInfo := commitFileInfo{
+			path:       path,
+			createdAt:  createdAt,
+			modifiedAt: modifiedAt,
+		}
+
+		capturedPostID := postID
+		capturedPath := path
+		capturedFileInfo := fileInfo
+
+		s.wg.Go(func() {
+			s.processPostFile(
+				s.ctx,
+				capturedPostID,
+				capturedPath,
+				capturedFileInfo,
+				ref,
+				repoFullName,
+				isMainBranch,
+				latestCommitTime,
+			)
+		})
+	}
 }
 
 func (s *PostService) UpsertPost() error {
