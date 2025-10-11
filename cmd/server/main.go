@@ -9,6 +9,12 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/dfryer1193/goblog/blog/application"
+	"github.com/dfryer1193/goblog/blog/persistence"
+	gh "github.com/dfryer1193/goblog/shared/github"
+
+	"github.com/dfryer1193/goblog/shared/db"
+	"github.com/google/go-github/v75/github"
 	"github.com/dfryer1193/mjolnir/router"
 	"github.com/rs/zerolog/log"
 )
@@ -16,9 +22,40 @@ import (
 const (
 	port            = 8080
 	shutdownTimeout = 5 * time.Second
+	// TODO: Load from config
+	ghOwner = "dfryer1193"
+	ghRepo  = "goblog-posts"
 )
 
+// TODO: implement a real markdown renderer
+ type placeholderMarkdownRenderer struct{}
+
+func (p placeholderMarkdownRenderer) Render(markdown string) (string, error) {
+	return "<p>" + markdown + "</p>", nil
+}
+
 func main() {
+	// Initialize dependencies
+	dbConn, err := db.GetConnection(context.Background(), "blog.db")
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to connect to database")
+	}
+	defer dbConn.Close()
+
+	// TODO: set up authenticated client
+	ghClient := github.NewClient(nil)
+	sourceRepo := gh.NewGithubSourceRepository(ghClient, ghOwner, ghRepo)
+
+	postRepo := persistence.NewPostRepository(dbConn)
+	markdownRenderer := placeholderMarkdownRenderer{}
+
+	postService := application.NewPostService(postRepo, sourceRepo, markdownRenderer)
+	defer func() {
+		if err := postService.Close(); err != nil {
+			log.Error().Err(err).Msg("Failed to gracefully close post service")
+		}
+	}()
+
 	r := router.New()
 
 	srv := &http.Server{

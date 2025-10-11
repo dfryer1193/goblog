@@ -11,11 +11,8 @@ import (
 )
 
 type PostService struct {
-	owner   string
-	gitRepo string
-
-	githubClient *github.Client
-	markdown     MarkdownRenderer
+	sourceRepo domain.SourceRepository
+	markdown   MarkdownRenderer
 
 	// Service lifecycle context - cancelled when Close() is called
 	ctx    context.Context
@@ -25,16 +22,16 @@ type PostService struct {
 	repo domain.PostRepository
 }
 
-func NewPostService(repo domain.PostRepository, ghClient *github.Client, markdown MarkdownRenderer) *PostService {
+func NewPostService(repo domain.PostRepository, sourceRepo domain.SourceRepository, markdown MarkdownRenderer) *PostService {
 	ctx, cancel := context.WithCancel(context.Background())
 	wg := sync.WaitGroup{}
 	return &PostService{
-		githubClient: ghClient,
-		markdown:     markdown,
-		ctx:          ctx,
-		cancel:       cancel,
-		wg:           &wg,
-		repo:         repo,
+		sourceRepo: sourceRepo,
+		markdown:   markdown,
+		ctx:        ctx,
+		cancel:     cancel,
+		wg:         &wg,
+		repo:       repo,
 	}
 }
 
@@ -51,25 +48,17 @@ func (s *PostService) Close() error {
 func (s *PostService) SyncRepositoryChanges(since time.Time) error {
 	lastUpdatedAt, err := s.repo.GetLatestUpdatedTime(s.ctx)
 	if err != nil {
-		return fmt.Errorf("Could not get the time of the last update.")
+		return fmt.Errorf("could not get the time of the last update: %w", err)
 	}
 
-	branches, resp, err := s.githubClient.Repositories.ListBranches(s.ctx, "owner", "repo", nil)
+	branches, err := s.sourceRepo.ListBranches(s.ctx)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve branches for %s/%s: %w", s.owner, s.gitRepo, err)
-	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("failed to retrieve branches fro %s/%s with status code %d", s.owner, s.gitRepo, resp.StatusCode)
+		return fmt.Errorf("failed to retrieve branches: %w", err)
 	}
 
 	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
-	for i := resp.NextPage; i <= resp.LastPage; i++ {
-		s.processBranches(lastUpdatedAt, branches)
-		branches, resp, err = s.githubClient.Repositories.ListBranches(s.ctx, s.owner, s.gitRepo, &github.BranchListOptions{
-			ListOptions: github.ListOptions{
-				Page: i,
-			},
-		})
+	for _, branch := range branches {
+		s.processBranches(lastUpdatedAt, []*github.Branch{branch})
 	}
 
 	return nil
