@@ -11,6 +11,9 @@ import (
 )
 
 type PostService struct {
+	owner   string
+	gitRepo string
+
 	githubClient *github.Client
 	markdown     MarkdownRenderer
 
@@ -45,24 +48,75 @@ func (s *PostService) Close() error {
 
 // SyncRepositoryChanges syncs posts from recent commits across all branches
 // This catches any changes that happened while the server was offline
-func (s *PostService) SyncRepositoryChanges(ctx context.Context, owner, repo string, since time.Time) error {
-	branches, resp, err := s.githubClient.Repositories.ListBranches(ctx, "owner", "repo", nil)
+func (s *PostService) SyncRepositoryChanges(since time.Time) error {
+	lastUpdatedAt, err := s.repo.GetLatestUpdatedTime(s.ctx)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve branches for %s/%s: %w", owner, repo, err)
+		return fmt.Errorf("Could not get the time of the last update.")
+	}
+
+	branches, resp, err := s.githubClient.Repositories.ListBranches(s.ctx, "owner", "repo", nil)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve branches for %s/%s: %w", s.owner, s.gitRepo, err)
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("failed to retrieve branches fro %s/%s with status code %d", owner, repo, resp.StatusCode)
+		return fmt.Errorf("failed to retrieve branches fro %s/%s with status code %d", s.owner, s.gitRepo, resp.StatusCode)
 	}
 
 	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
 	for i := resp.NextPage; i <= resp.LastPage; i++ {
-		s.processBranches(branches)
-		branches, resp, err = s.githubClient.Repositories.ListBranches(ctx, "owner", "repo", &github.BranchListOptions{
+		s.processBranches(lastUpdatedAt, branches)
+		branches, resp, err = s.githubClient.Repositories.ListBranches(s.ctx, s.owner, s.gitRepo, &github.BranchListOptions{
 			ListOptions: github.ListOptions{
 				Page: i,
 			},
 		})
 	}
+
+	return nil
+}
+
+func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*github.Branch) error {
+	for _, b := range branches {
+		err := s.processBranch(lastUpdatedAt, b)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Branch) error {
+	// TODO: Get commits from this branch that have happened since the last update
+	commits, resp, err := s.githubClient.Repositories.ListCommits(s.ctx, s.owner, s.gitRepo, &github.CommitsListOptions{
+		SHA:   *branch.Name,
+		Since: lastUpdatedAt,
+	})
+	// TODO: Make error handling more robust, including using zerolog
+	if err != nil {
+		return fmt.Errorf("Failed to list commits since %s for branch %s", lastUpdatedAt.String(), *branch.Name)
+	}
+	if resp.Request.Response.StatusCode != 200 {
+		return fmt.Errorf("Got exceptional status code listing commits since %s for branch %s", lastUpdatedAt.String(), *branch.Name)
+	}
+
+	// TODO: Figure out the last update time for each changed post, then process each file. Capture the timestamp of the last commit the file was modified in and use it as the last updated time in the database
+	for _, commit := range commits {
+		fullCommit, resp, err := s.githubClient.Repositories.GetCommit(s.ctx, s.owner, s.gitRepo, *commit.SHA, nil)
+		if err != nil {
+			// Handle err
+		}
+		if resp.Response.StatusCode != 200 {
+			// Handle exceptional code
+		}
+
+		for _, f := range fullCommit.Files {
+			// TODO: Handle additions, modifications, and removals
+			_ = f // TODO: Remove this
+			// TODO: How do renames look in a commit? How should we handle renames?
+		}
+	}
+
 	return nil
 }
 
