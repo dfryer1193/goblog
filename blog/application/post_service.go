@@ -169,7 +169,7 @@ func (s *PostService) dispatchPostRemovals(filesToRemove map[string]bool) {
 		capturedPostID := postID
 		s.wg.Go(func() {
 			// TODO: Log error from Unpublish
-			s.repo.Unpublish(capturedPostID)
+			s.repo.Unpublish(s.ctx, capturedPostID)
 		})
 	}
 }
@@ -188,7 +188,7 @@ func (s *PostService) dispatchPostUpserts(filesToProcess map[string]*github.Repo
 
 		modifiedAt := commit.GetCommit().GetAuthor().GetDate().Time
 
-		existingPost, err := s.repo.GetPostByID(s.ctx, postID)
+		existingPost, err := s.repo.GetPost(s.ctx, postID)
 		createdAt := modifiedAt
 		if err == nil && existingPost != nil {
 			createdAt = existingPost.CreatedAt
@@ -319,12 +319,10 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 
 		// Capture variables for closure
 		capturedPostID := postID
-		capturedCommitTime := latestCommitTime
-
 		wg.Go(func() {
 			// Use the service's lifecycle context for cancellation
 			// TODO: Log error
-			s.repo.Unpublish(capturedPostID)
+			s.repo.Unpublish(s.ctx, capturedPostID)
 		})
 	}
 
