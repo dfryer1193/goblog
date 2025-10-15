@@ -45,7 +45,7 @@ func (r *SQLitePostRepository) UpsertPost(ctx context.Context, p *domain.Post) e
 
 	// Convert time.Time to nullable types for SQL
 	// Zero time values should be stored as NULL
-	var updatedAt, publishedAt, createdAt interface{}
+	var updatedAt, publishedAt, createdAt any
 
 	if !p.UpdatedAt.IsZero() {
 		updatedAt = p.UpdatedAt
