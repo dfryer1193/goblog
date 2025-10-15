@@ -3,11 +3,17 @@ package application
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/dfryer1193/goblog/blog/domain"
+	"github.com/dfryer1193/mjolnir/utils/set"
 	"github.com/google/go-github/v75/github"
+)
+
+var (
+	postPathRegex = regexp.MustCompile(`^posts/(\d+)-.*\.md$`)
 )
 
 type PostService struct {
@@ -95,7 +101,12 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 		return fmt.Errorf("failed to analyze commits for branch %s: %w", *branch.Name, err)
 	}
 
-	s.dispatchPostRemovals(filesToRemove)
+	for _, f := range filesToRemove.Items() {
+		err := s.repo.Unpublish(s.ctx, f)
+		if err != nil {
+			return err
+		}
+	}
 
 	latestCommitTime := commits[0].GetCommit().GetAuthor().GetDate().Time
 	s.dispatchPostUpserts(filesToProcess, branch, latestCommitTime)
@@ -103,10 +114,58 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 	return nil
 }
 
+func handleCommitFile(
+	path string,
+	status string,
+	previousPath string,
+	fullCommit *github.RepositoryCommit,
+	filesToProcess map[string]*github.RepositoryCommit,
+	filesToRemove set.Set[string],
+) (map[string]*github.RepositoryCommit, set.Set[string]) {
+	currentIsPost := isPostFile(path)
+	previousIsPost := isPostFile(previousPath)
+
+	if !currentIsPost && !previousIsPost {
+		return filesToProcess, filesToRemove
+	}
+
+	switch status {
+	case "added", "modified":
+		if currentIsPost {
+			if _, exists := filesToProcess[path]; !exists {
+				filesToProcess[path] = fullCommit
+			}
+			filesToRemove.Remove(path)
+		}
+	case "removed":
+		if currentIsPost {
+			if _, exists := filesToProcess[path]; !exists {
+				filesToRemove.Add(path)
+			}
+			delete(filesToProcess, path)
+		}
+	case "renamed":
+		if previousIsPost {
+			if _, exists := filesToProcess[previousPath]; !exists {
+				filesToRemove.Add(previousPath)
+			}
+			delete(filesToProcess, previousPath)
+		}
+		if currentIsPost {
+			if _, exists := filesToProcess[path]; !exists {
+				filesToProcess[path] = fullCommit
+			}
+			filesToRemove.Remove(previousPath)
+		}
+	}
+
+	return filesToProcess, filesToRemove
+}
+
 // analyzeCommitFiles iterates through commits to determine which files were changed and which were removed.
-func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (map[string]*github.RepositoryCommit, map[string]bool, error) {
+func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (map[string]*github.RepositoryCommit, set.Set[string], error) {
 	filesToProcess := make(map[string]*github.RepositoryCommit)
-	filesToRemove := make(map[string]bool)
+	filesToRemove := set.New[string]()
 
 	for _, commitSummary := range commits {
 		fullCommit, err := s.sourceRepo.GetCommit(s.ctx, *commitSummary.SHA)
@@ -115,67 +174,14 @@ func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (ma
 		}
 
 		for _, file := range fullCommit.Files {
-			handleFile := func(path string, status string, previousPath string) {
-				isCurrentPost := isPostFile(path)
-				isPreviousPost := isPostFile(previousPath)
-
-				if !isCurrentPost && !isPreviousPost {
-					return
-				}
-
-				switch status {
-				case "added", "modified":
-					if isCurrentPost {
-						if _, exists := filesToProcess[path]; !exists {
-							filesToProcess[path] = fullCommit
-						}
-						delete(filesToRemove, path)
-					}
-				case "removed":
-					if isCurrentPost {
-						if _, exists := filesToProcess[path]; !exists {
-							filesToRemove[path] = true
-						}
-						delete(filesToProcess, path)
-					}
-				case "renamed":
-					if isPreviousPost {
-						if _, exists := filesToProcess[previousPath]; !exists {
-							filesToRemove[previousPath] = true
-						}
-						delete(filesToProcess, previousPath)
-					}
-					if isCurrentPost {
-						if _, exists := filesToProcess[path]; !exists {
-							filesToProcess[path] = fullCommit
-						}
-						delete(filesToRemove, path)
-					}
-				}
-			}
-			handleFile(file.GetFilename(), file.GetStatus(), file.GetPreviousFilename())
+			filesToProcess, filesToRemove = handleCommitFile(file.GetFilename(), file.GetStatus(), file.GetPreviousFilename(), fullCommit, filesToProcess, filesToRemove)
 		}
 	}
 	return filesToProcess, filesToRemove, nil
 }
 
-// dispatchPostRemovals spawns goroutines to unpublish posts that were removed.
-func (s *PostService) dispatchPostRemovals(filesToRemove map[string]bool) {
-	for path := range filesToRemove {
-		postID := extractPostID(path)
-		if postID == "" {
-			continue
-		}
-		capturedPostID := postID
-		s.wg.Go(func() {
-			// TODO: Log error from Unpublish
-			s.repo.Unpublish(s.ctx, capturedPostID)
-		})
-	}
-}
-
-// dispatchPostUpserts spawns goroutines to create or update posts that were changed.
-func (s *PostService) dispatchPostUpserts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch, latestCommitTime time.Time) {
+// upsertPosts processes and upserts posts from the given filesToProcess map
+func (s *PostService) upsertPosts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch, latestCommitTime time.Time) error {
 	repoFullName := s.sourceRepo.GetRepoFullName()
 	ref := "refs/heads/" + *branch.Name
 	isMainBranch := ref == "refs/heads/"+s.mainBranchName
@@ -204,22 +210,18 @@ func (s *PostService) dispatchPostUpserts(filesToProcess map[string]*github.Repo
 		capturedPath := path
 		capturedFileInfo := fileInfo
 
-		s.wg.Go(func() {
-			s.processPostFile(
-				s.ctx,
-				capturedPostID,
-				capturedPath,
-				capturedFileInfo,
-				ref,
-				repoFullName,
-				isMainBranch,
-				latestCommitTime,
-			)
-		})
+		s.processPostFile(
+			s.ctx,
+			capturedPostID,
+			capturedPath,
+			capturedFileInfo,
+			ref,
+			repoFullName,
+			isMainBranch,
+			latestCommitTime,
+		)
 	}
-}
 
-func (s *PostService) UpsertPost() error {
 	return nil
 }
 
@@ -257,7 +259,6 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 		// Track added files (for CreatedAt timestamp)
 		for _, file := range commit.Added {
 			if isPostFile(file) {
-				// Only set the creation time if this is the first time we see this file
 				if _, exists := changedFiles[file]; !exists {
 					changedFiles[file] = commitFileInfo{
 						path:       file,
@@ -277,7 +278,7 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 					// Update the modified time but keep the original created time
 					info.modifiedAt = commitTime
 					changedFiles[file] = info
-			} else {
+				} else {
 					// File was modified but we didn't see it added in this push
 					// Use the commit time for both created and modified
 					changedFiles[file] = commitFileInfo{
@@ -356,7 +357,8 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 
 	return nil
 }
-// processPostFile processes a single post file asynchronously
+
+// processPostFile processes a single post file
 // This function respects context cancellation for graceful shutdown
 func (s *PostService) processPostFile(
 	ctx context.Context,
@@ -368,91 +370,9 @@ func (s *PostService) processPostFile(
 	isMainBranch bool,
 	latestCommitTime time.Time,
 ) {
-	// Check if context is cancelled before starting expensive operations
-	select {
-	case <-ctx.Done():
-		// TODO: Log cancellation
-		// log.Debug().Str("postID", postID).Msg("Post processing cancelled")
-		return
-	default:
-	}
-
-	// TODO: Fetch the file content from the repository
-	// This requires making a GitHub API call to get the file contents
-	// content, err := s.fetchFileContent(ctx, repoFullName, ref, filePath)
-	// if err != nil {
-	//     if ctx.Err() != nil {
-	//         // Context was cancelled
-	//         return
-	//     }
-	//     // Log error but don't fail
-	//     log.Error().Err(err).Str("filePath", filePath).Msg("Failed to fetch file content")
-	//     return
-	// }
-
-	// Check cancellation again before expensive parsing
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	// TODO: Parse markdown and extract title
-	// Title should be the text of the first H1 header.
-	// If there are no H1 headers, use the title from the filename, converted to title case.
-	// title := extractTitle(content, filePath)
-
-	// TODO: Extract snippet from markdown
-	// snippet := extractSnippet(content)
-
-	// TODO: Convert markdown to HTML (potentially expensive operation)
-	// htmlContent := convertMarkdownToHTML(content)
-
-	// Check cancellation before I/O operations
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	// TODO: Store HTML content on filesystem
-	// htmlPath := storeHTMLToFile(postID, htmlContent)
-
-	// TODO: Create/update post in database
-	// post := &domain.Post{
-	//     ID:          postID,
-	//     Title:       title,
-	//     Snippet:     snippet,
-	//     HTMLPath:    htmlPath,
-	//     UpdatedAt:   fileInfo.modifiedAt,
-	//     CreatedAt:   fileInfo.createdAt,
-	// }
-	//
-	// if isMainBranch {
-	//     post.PublishedAt = latestCommitTime
-	// } else {
-	//     // Non-main branch: process and store but don't publish
-	//     post.PublishedAt = time.Time{} // Zero value = unpublished
-	// }
-	//
-	// err = s.repo.UpsertPost(post)
-	// if err != nil {
-	//     if ctx.Err() != nil {
-	//         // Context was cancelled
-	//         return
-	//     }
-	//     // Log error but don't fail
-	//     log.Error().Err(err).Str("postID", postID).Msg("Failed to upsert post")
-	//     return
-	// }
-
-	_ = postID
-	_ = filePath
-	_ = fileInfo
-	_ = ref
-	_ = repoFullName
-	_ = isMainBranch
-	_ = latestCommitTime
+	// TODO: 1. run the file through the markdown processor
+	// TODO: 2. save the post info to the database
+	// TODO: 3. save the file to disk/storage
 }
 
 // commitFileInfo tracks when a file was first created and last modified in a push
@@ -465,51 +385,15 @@ type commitFileInfo struct {
 // isPostFile checks if a file path is a valid post file in the posts/ directory
 // Valid format: posts/NNN-title-of-post.md where NNN is one or more digits
 func isPostFile(path string) bool {
-	// Check if file is in posts/ directory and ends with .md
-	if len(path) < 10 || path[:6] != "posts/" || path[len(path)-3:] != ".md" {
-		return false
-	}
-
-	// Extract filename from path
-	filename := path[6:] // Remove "posts/" prefix
-
-	// Check if filename starts with digits followed by a hyphen
-	digitCount := 0
-	for _, ch := range filename {
-		if ch >= '0' && ch <= '9' {
-			digitCount++
-		} else if ch == '-' && digitCount > 0 {
-			// Valid format: at least one digit followed by hyphen
-			return true
-		} else {
-			// Invalid format
-			return false
-		}
-	}
-
-	return false
+	return postPathRegex.MatchString(path)
 }
 
 // extractPostID extracts the numeric ID from a post filename
 // Example: "posts/001-my-post.md" -> "001"
 func extractPostID(path string) string {
-	if len(path) < 10 || path[:6] != "posts/" {
+	matches := postPathRegex.FindStringSubmatch(path)
+	if len(matches) < 2 {
 		return ""
 	}
-
-	filename := path[6:] // Remove "posts/" prefix
-
-	// Extract digits before the first hyphen
-	id := ""
-	for _, ch := range filename {
-		if ch >= '0' && ch <= '9' {
-			id += string(ch)
-		} else if ch == '-' {
-			break
-		} else {
-			return ""
-		}
-	}
-
-	return id
+	return matches[1]
 }
