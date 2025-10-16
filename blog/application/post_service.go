@@ -10,6 +10,7 @@ import (
 	"github.com/dfryer1193/goblog/blog/domain"
 	"github.com/dfryer1193/mjolnir/utils/set"
 	"github.com/google/go-github/v75/github"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -53,7 +54,7 @@ func (s *PostService) Close() error {
 
 // SyncRepositoryChanges syncs posts from recent commits across all branches
 // This catches any changes that happened while the server was offline
-func (s *PostService) SyncRepositoryChanges(since time.Time) error {
+func (s *PostService) SyncRepositoryChanges() error {
 	lastUpdatedAt, err := s.repo.GetLatestUpdatedTime(s.ctx)
 	if err != nil {
 		return fmt.Errorf("could not get the time of the last update: %w", err)
@@ -76,8 +77,8 @@ func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*githu
 	for _, b := range branches {
 		err := s.processBranch(lastUpdatedAt, b)
 		if err != nil {
-			// TODO: use zerolog to log error and continue to next branch
-			return err
+			log.Error().Err(err).Str("branch", *b.Name).Msg("Failed to process branch")
+			continue
 		}
 	}
 
@@ -87,7 +88,6 @@ func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*githu
 func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Branch) error {
 	commits, err := s.sourceRepo.GetCommitsSince(s.ctx, *branch.Name, lastUpdatedAt)
 	if err != nil {
-		// TODO: use zerolog for error logging
 		return fmt.Errorf("failed to get commits for branch %s: %w", *branch.Name, err)
 	}
 
@@ -97,7 +97,6 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 
 	filesToProcess, filesToRemove, err := s.analyzeCommitFiles(commits)
 	if err != nil {
-		// TODO: use zerolog for error logging
 		return fmt.Errorf("failed to analyze commits for branch %s: %w", *branch.Name, err)
 	}
 
@@ -108,8 +107,7 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 		}
 	}
 
-	latestCommitTime := commits[0].GetCommit().GetAuthor().GetDate().Time
-	s.dispatchPostUpserts(filesToProcess, branch, latestCommitTime)
+	s.upsertPosts(filesToProcess, branch)
 
 	return nil
 }
@@ -181,8 +179,7 @@ func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (ma
 }
 
 // upsertPosts processes and upserts posts from the given filesToProcess map
-func (s *PostService) upsertPosts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch, latestCommitTime time.Time) error {
-	repoFullName := s.sourceRepo.GetRepoFullName()
+func (s *PostService) upsertPosts(filesToProcess map[string]*github.RepositoryCommit, branch *github.Branch) error {
 	ref := "refs/heads/" + *branch.Name
 	isMainBranch := ref == "refs/heads/"+s.mainBranchName
 
@@ -207,18 +204,16 @@ func (s *PostService) upsertPosts(filesToProcess map[string]*github.RepositoryCo
 		}
 
 		capturedPostID := postID
-		capturedPath := path
 		capturedFileInfo := fileInfo
+		// Use the commit SHA instead of ref to get the exact file version
+		capturedCommitSHA := commit.GetSHA()
 
 		s.processPostFile(
 			s.ctx,
 			capturedPostID,
-			capturedPath,
 			capturedFileInfo,
-			ref,
-			repoFullName,
+			capturedCommitSHA,
 			isMainBranch,
-			latestCommitTime,
 		)
 	}
 
@@ -229,131 +224,82 @@ func (s *PostService) upsertPosts(filesToProcess map[string]*github.RepositoryCo
 // This method returns immediately after validating the event and spawning async workers
 // Workers use the service's lifecycle context, not the request context
 func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
-	// TODO: Get expected repository name from environment variable or config
-	expectedRepo := "" // TODO: Load from config/env
-	if expectedRepo != "" && evt.GetRepo().GetFullName() != expectedRepo {
-		// Not the repo we're interested in, silently ignore
-		return nil
+	// Get all commits in the push range
+	var commits []*github.RepositoryCommit
+	var err error
+
+	if evt.GetBefore() != "" && evt.GetBefore() != "0000000000000000000000000000000000000000" {
+		// Normal push with a base commit - get the range
+		commits, err = s.sourceRepo.GetCommitsInRange(s.ctx, evt.GetBefore(), evt.GetAfter())
+		if err != nil {
+			return fmt.Errorf("failed to get commits in range %s...%s: %w", evt.GetBefore(), evt.GetAfter(), err)
+		}
+	} else {
+		// New branch or first commit - just get the head commit
+		headCommit, err := s.sourceRepo.GetCommit(s.ctx, evt.GetAfter())
+		if err != nil {
+			return fmt.Errorf("failed to get commit %s: %w", evt.GetAfter(), err)
+		}
+		commits = []*github.RepositoryCommit{headCommit}
 	}
 
-	// Get the ref (branch) being pushed to
+	// Analyze all commits to determine which files to process
+	filesToProcess, filesToRemove, err := s.analyzeCommitFiles(commits)
+	if err != nil {
+		return fmt.Errorf("failed to analyze commits: %w", err)
+	}
+
 	ref := evt.GetRef()
 	isMainBranch := ref == "refs/heads/"+s.mainBranchName
 
-	// Process all commits in the push to catch any changes to posts
-	commits := evt.GetCommits()
-	if len(commits) == 0 {
-		// No commits, nothing to process
-		return nil
-	}
-
-	// Track all changed and deleted post files across all commits
-	// Map from file path to the earliest commit time that introduced/modified it
-	changedFiles := make(map[string]commitFileInfo)
-	deletedFiles := make(map[string]bool)
-
-	// Process commits in order to track file changes
-	for _, commit := range commits {
-		commitTime := commit.GetTimestamp().Time
-
-		// Track added files (for CreatedAt timestamp)
-		for _, file := range commit.Added {
-			if isPostFile(file) {
-				if _, exists := changedFiles[file]; !exists {
-					changedFiles[file] = commitFileInfo{
-						path:       file,
-						createdAt:  commitTime,
-						modifiedAt: commitTime,
-					}
+	if isMainBranch {
+		for _, filePath := range filesToRemove.Items() {
+			capturedPath := filePath
+			s.wg.Go(func() {
+				if err := s.repo.Unpublish(s.ctx, capturedPath); err != nil {
+					log.Error().Err(err).Str("path", capturedPath).Msg("Failed to unpublish post")
 				}
-				// Remove from deleted files if it was previously deleted
-				delete(deletedFiles, file)
-			}
-		}
-
-		// Track modified files
-		for _, file := range commit.Modified {
-			if isPostFile(file) {
-				if info, exists := changedFiles[file]; exists {
-					// Update the modified time but keep the original created time
-					info.modifiedAt = commitTime
-					changedFiles[file] = info
-				} else {
-					// File was modified but we didn't see it added in this push
-					// Use the commit time for both created and modified
-					changedFiles[file] = commitFileInfo{
-						path:       file,
-						createdAt:  commitTime,
-						modifiedAt: commitTime,
-					}
-				}
-				// Remove from deleted files if it was previously deleted
-				delete(deletedFiles, file)
-			}
-		}
-
-		// Track deleted files
-		for _, file := range commit.Removed {
-			if isPostFile(file) {
-				deletedFiles[file] = true
-				// Remove from changed files if it was previously changed
-				delete(changedFiles, file)
-			}
+			})
 		}
 	}
 
-	// Get the latest commit time for PublishedAt field
-	latestCommit := commits[len(commits)-1]
-	latestCommitTime := latestCommit.GetTimestamp().Time
-
-	// Spawn async workers to process posts using sync.WaitGroup.Go (Go 1.25+)
-	// We don't wait for them to complete - they run in the background
-	var wg sync.WaitGroup
-
-	// Process deleted post files - unset PublishedAt
-	for filePath := range deletedFiles {
+	// Process additions/modifications
+	for filePath, commit := range filesToProcess {
 		postID := extractPostID(filePath)
 		if postID == "" {
-			// Invalid post file format, skip silently
 			continue
 		}
 
-		// Capture variables for closure
-		capturedPostID := postID
-		wg.Go(func() {
-			// Use the service's lifecycle context for cancellation
-			// TODO: Log error
-			s.repo.Unpublish(s.ctx, capturedPostID)
-		})
-	}
+		modifiedAt := commit.GetCommit().GetAuthor().GetDate().Time
 
-	// Process changed post files
-	for filePath, fileInfo := range changedFiles {
-		postID := extractPostID(filePath)
-		if postID == "" {
-			// Invalid post file format, skip silently
-			continue
+		existingPost, err := s.repo.GetPost(s.ctx, postID)
+		createdAt := modifiedAt
+		if err == nil && existingPost != nil {
+			createdAt = existingPost.CreatedAt
 		}
 
-		// Capture variables for closure
+		fileInfo := commitFileInfo{
+			path:       filePath,
+			createdAt:  createdAt,
+			modifiedAt: modifiedAt,
+		}
+
+		// Capture variables for goroutine
 		capturedPostID := postID
-		capturedFilePath := filePath
 		capturedFileInfo := fileInfo
-		capturedRef := ref
-		capturedIsMainBranch := isMainBranch
-		capturedCommitTime := latestCommitTime
-		capturedRepoFullName := evt.GetRepo().GetFullName()
+		// Use the commit SHA instead of ref to get the exact file version
+		capturedCommitSHA := commit.GetSHA()
 
-		wg.Go(func() {
-			// Use the service's lifecycle context for cancellation
-			s.processPostFile(s.ctx, capturedPostID, capturedFilePath, capturedFileInfo, capturedRef, capturedRepoFullName, capturedIsMainBranch, capturedCommitTime)
+		s.wg.Go(func() {
+			s.processPostFile(
+				s.ctx,
+				capturedPostID,
+				capturedFileInfo,
+				capturedCommitSHA,
+				isMainBranch,
+			)
 		})
 	}
-
-	// Don't wait for the workers to complete - return immediately
-	// The workers will continue processing in the background
-	// Note: We don't need to explicitly wait - wg.Go handles the lifecycle
-	// The goroutines will complete on their own, and errors are logged internally
 
 	return nil
 }
@@ -363,16 +309,44 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 func (s *PostService) processPostFile(
 	ctx context.Context,
 	postID string,
-	filePath string,
 	fileInfo commitFileInfo,
-	ref string,
-	repoFullName string,
+	commitSHA string,
 	isMainBranch bool,
-	latestCommitTime time.Time,
 ) {
-	// TODO: 1. run the file through the markdown processor
-	// TODO: 2. save the post info to the database
-	// TODO: 3. save the file to disk/storage
+	markdownContent, err := s.sourceRepo.GetFileContents(ctx, fileInfo.path, commitSHA)
+	if err != nil {
+		log.Error().Err(err).Str("path", fileInfo.path).Str("commitSHA", commitSHA).Msg("Failed to get file contents")
+		return
+	}
+
+	result, err := s.markdown.Render(markdownContent)
+	if err != nil {
+		log.Error().Err(err).Str("path", fileInfo.path).Msg("Failed to render markdown")
+		return
+	}
+
+	post := &domain.Post{
+		ID:        postID,
+		Title:     result.Title,
+		Snippet:   result.Snippet,
+		HTMLPath:  result.HTMLPath,
+		UpdatedAt: fileInfo.modifiedAt,
+		CreatedAt: fileInfo.createdAt,
+	}
+
+	err = s.repo.UpsertPost(ctx, post)
+	if err != nil {
+		log.Error().Err(err).Str("postID", postID).Msg("Failed to upsert post")
+		return
+	}
+
+	if isMainBranch {
+		err = s.repo.Publish(ctx, postID)
+		if err != nil {
+			log.Error().Err(err).Str("postID", postID).Msg("Failed to publish post")
+			return
+		}
+	}
 }
 
 // commitFileInfo tracks when a file was first created and last modified in a push

@@ -39,6 +39,17 @@ func (g *GithubSourceRepository) GetCommitsSince(ctx context.Context, branchName
 	return commits, nil
 }
 
+// GetCommitsInRange fetches commits between baseCommit and headCommit (inclusive).
+// This is useful for processing all commits in a push event.
+func (g *GithubSourceRepository) GetCommitsInRange(ctx context.Context, baseCommit string, headCommit string) ([]*github.RepositoryCommit, error) {
+	op := fmt.Sprintf("comparing commits %s...%s", baseCommit, headCommit)
+	comparison, _, err := g.client.Repositories.CompareCommits(ctx, g.owner, g.gitRepo, baseCommit, headCommit, nil)
+	if err != nil {
+		return nil, handleGithubError(op, err)
+	}
+	return comparison.Commits, nil
+}
+
 // GetCommit fetches a single commit by its SHA.
 func (g *GithubSourceRepository) GetCommit(ctx context.Context, sha string) (*github.RepositoryCommit, error) {
 	op := fmt.Sprintf("getting commit %s", sha)
@@ -47,6 +58,28 @@ func (g *GithubSourceRepository) GetCommit(ctx context.Context, sha string) (*gi
 		return nil, handleGithubError(op, err)
 	}
 	return commit, nil
+}
+
+// GetFileContents fetches the contents of a file at a specific ref (branch, tag, or commit SHA).
+func (g *GithubSourceRepository) GetFileContents(ctx context.Context, path string, ref string) ([]byte, error) {
+	op := fmt.Sprintf("getting file %s at ref %s", path, ref)
+	fileContent, _, _, err := g.client.Repositories.GetContents(ctx, g.owner, g.gitRepo, path, &github.RepositoryContentGetOptions{
+		Ref: ref,
+	})
+	if err != nil {
+		return nil, handleGithubError(op, err)
+	}
+	
+	if fileContent == nil {
+		return nil, fmt.Errorf("github: %s returned nil file content", op)
+	}
+	
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return nil, fmt.Errorf("github: %s failed to decode content: %w", op, err)
+	}
+	
+	return []byte(content), nil
 }
 
 // ListBranches fetches all branches for the repository, handling pagination.
