@@ -7,6 +7,8 @@ type MarkdownProcessingResult struct {
 	HTMLPath string
 }
 
+// TODO: Use yuin/goldmark for markdown rendering
+
 // MarkdownRenderer defines the interface for converting markdown to HTML.
 type MarkdownRenderer interface {
 	Render(markdown []byte) (*MarkdownProcessingResult, error)
