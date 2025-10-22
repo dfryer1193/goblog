@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"path"
 	"regexp"
 	"sync"
 	"time"
@@ -313,13 +314,14 @@ func (s *PostService) processPostFile(
 	commitSHA string,
 	isMainBranch bool,
 ) {
+	fileBasename := path.Base(fileInfo.path)
 	markdownContent, err := s.sourceRepo.GetFileContents(ctx, fileInfo.path, commitSHA)
 	if err != nil {
 		log.Error().Err(err).Str("path", fileInfo.path).Str("commitSHA", commitSHA).Msg("Failed to get file contents")
 		return
 	}
 
-	result, err := s.markdown.Render(markdownContent)
+	result, err := s.markdown.Render(fileBasename, markdownContent)
 	if err != nil {
 		log.Error().Err(err).Str("path", fileInfo.path).Msg("Failed to render markdown")
 		return
