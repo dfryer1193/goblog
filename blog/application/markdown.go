@@ -17,8 +17,6 @@ type MarkdownProcessingResult struct {
 	HTMLPath string
 }
 
-// TODO: Use yuin/goldmark for markdown rendering
-
 // MarkdownRenderer defines the interface for converting markdown to HTML.
 type MarkdownRenderer interface {
 	Render(basename string, markdown []byte) (*MarkdownProcessingResult, error)
@@ -87,11 +85,12 @@ func extractPostTitle(markdown []byte) string {
 	}
 
 	firstLine := strings.TrimSpace(lines[0])
-	if strings.HasPrefix(firstLine, "# ") {
-		return strings.TrimSpace(strings.TrimPrefix(firstLine, "# "))
+	title, found := strings.CutPrefix(firstLine, "# ")
+	if !found {
+		return "Untitled Post"
 	}
 
-	return "Untitled Post"
+	return title
 }
 
 func extractSnippet(markdown []byte) string {
