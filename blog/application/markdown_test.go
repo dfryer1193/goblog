@@ -67,22 +67,52 @@ func TestExtractSnippet(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "Valid snippet",
-			markdown: []byte("# Title\nThis is the snippet\nMore content"),
-			expected: "This is the snippet",
+			name:     "First paragraph after title",
+			markdown: []byte("# Title\nThis is the first paragraph\n\nMore content"),
+			expected: "This is the first paragraph",
 		},
 		{
-			name:     "Snippet with spaces",
-			markdown: []byte("# Title\n  This is a snippet with spaces  \nMore"),
-			expected: "This is a snippet with spaces",
+			name:     "Multi-line first paragraph",
+			markdown: []byte("# Title\nFirst line of paragraph.\nSecond line of paragraph.\n\nSecond paragraph"),
+			expected: "First line of paragraph. Second line of paragraph.",
 		},
 		{
-			name:     "Empty second line",
-			markdown: []byte("# Title\n\nContent"),
-			expected: "",
+			name:     "Skip empty lines after title",
+			markdown: []byte("# Title\n\n\nThis is the content after blank lines"),
+			expected: "This is the content after blank lines",
 		},
 		{
-			name:     "Only one line",
+			name:     "Multiple headings",
+			markdown: []byte("# Title\n## Subtitle\nFirst paragraph content"),
+			expected: "First paragraph content",
+		},
+		{
+			name:     "Stop at code block",
+			markdown: []byte("# Title\nFirst paragraph\n```\ncode\n```"),
+			expected: "First paragraph",
+		},
+		{
+			name:     "Stop at list",
+			markdown: []byte("# Title\nIntro text\n- List item"),
+			expected: "Intro text",
+		},
+		{
+			name:     "Stop at horizontal rule",
+			markdown: []byte("# Title\nContent before rule\n---\nAfter"),
+			expected: "Content before rule",
+		},
+		{
+			name:     "Stop at table",
+			markdown: []byte("# Title\nIntro\n| Col1 | Col2 |"),
+			expected: "Intro",
+		},
+		{
+			name:     "Truncate long paragraph",
+			markdown: []byte("# Title\nThis is a very long paragraph that exceeds the maximum length limit and should be truncated at a word boundary to ensure that the snippet looks clean and professional without cutting words in the middle which would look unprofessional."),
+			expected: "This is a very long paragraph that exceeds the maximum length limit and should be truncated at a word boundary to ensure that the snippet looks clean and professional without cutting words in the...",
+		},
+		{
+			name:     "Only title, no content",
 			markdown: []byte("# Title"),
 			expected: "",
 		},
@@ -90,6 +120,16 @@ func TestExtractSnippet(t *testing.T) {
 			name:     "Empty markdown",
 			markdown: []byte(""),
 			expected: "",
+		},
+		{
+			name:     "No title, direct content",
+			markdown: []byte("This is content without a title.\nSecond line."),
+			expected: "This is content without a title. Second line.",
+		},
+		{
+			name:     "Paragraph with inline formatting",
+			markdown: []byte("# Title\nThis has **bold** and *italic* text."),
+			expected: "This has **bold** and *italic* text.",
 		},
 	}
 
@@ -124,28 +164,37 @@ func TestMarkdownRendererImpl_Render(t *testing.T) {
 		{
 			name:           "Basic markdown rendering",
 			basename:       "test.md",
-			markdown:       []byte("# Hello World\nThis is a test\n\nSome **bold** text"),
+			markdown:       []byte("# Hello World\nThis is a test paragraph.\n\nSome **bold** text"),
 			expectedTitle:  "Hello World",
-			expectedSnip:   "This is a test",
+			expectedSnip:   "This is a test paragraph.",
 			expectedHTML:   "test.html",
 			shouldError:    false,
 		},
 		{
 			name:           "Markdown without title",
 			basename:       "notitle.md",
-			markdown:       []byte("Just some content\nNo title here"),
+			markdown:       []byte("Just some content here.\nMore content on line two."),
 			expectedTitle:  "Untitled Post",
-			expectedSnip:   "No title here",
+			expectedSnip:   "Just some content here. More content on line two.",
 			expectedHTML:   "notitle.html",
 			shouldError:    false,
 		},
 		{
 			name:           "Complex markdown with GFM features",
 			basename:       "complex.md",
-			markdown:       []byte("# Complex Post\nA snippet\n\n- [ ] Task 1\n- [x] Task 2\n\n| Col1 | Col2 |\n|------|------|\n| A    | B    |"),
+			markdown:       []byte("# Complex Post\nThis is my introduction paragraph.\n\n- [ ] Task 1\n- [x] Task 2\n\n| Col1 | Col2 |\n|------|------|\n| A    | B    |"),
 			expectedTitle:  "Complex Post",
-			expectedSnip:   "A snippet",
+			expectedSnip:   "This is my introduction paragraph.",
 			expectedHTML:   "complex.html",
+			shouldError:    false,
+		},
+		{
+			name:           "Multi-line paragraph",
+			basename:       "multiline.md",
+			markdown:       []byte("# Post Title\nFirst line of intro.\nSecond line of intro.\n\nSecond paragraph"),
+			expectedTitle:  "Post Title",
+			expectedSnip:   "First line of intro. Second line of intro.",
+			expectedHTML:   "multiline.html",
 			shouldError:    false,
 		},
 		{

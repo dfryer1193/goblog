@@ -94,11 +94,62 @@ func extractPostTitle(markdown []byte) string {
 }
 
 func extractSnippet(markdown []byte) string {
-	lines := strings.SplitN(string(markdown), "\n", 3)
-	if len(lines) < 2 {
+	const maxLength = 200
+
+	lines := strings.Split(string(markdown), "\n")
+	var paragraphLines []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip headings before we find content
+		if strings.HasPrefix(trimmed, "#") {
+			if len(paragraphLines) > 0 {
+				break
+			}
+			continue
+		}
+
+		// Empty line handling
+		if trimmed == "" {
+			if len(paragraphLines) > 0 {
+				break // End of first paragraph
+			}
+			continue
+		}
+
+		// Stop at code blocks, horizontal rules, lists, tables
+		if strings.HasPrefix(trimmed, "```") ||
+			strings.HasPrefix(trimmed, "---") ||
+			strings.HasPrefix(trimmed, "***") ||
+			strings.HasPrefix(trimmed, "- ") ||
+			strings.HasPrefix(trimmed, "* ") ||
+			strings.HasPrefix(trimmed, "+ ") ||
+			strings.HasPrefix(trimmed, "|") {
+			if len(paragraphLines) > 0 {
+				break
+			}
+			continue
+		}
+
+		// Collect paragraph content
+		paragraphLines = append(paragraphLines, trimmed)
+	}
+
+	if len(paragraphLines) == 0 {
 		return ""
 	}
 
-	secondLine := strings.TrimSpace(lines[1])
-	return secondLine
+	snippet := strings.Join(paragraphLines, " ")
+
+	// Truncate if too long
+	if len(snippet) > maxLength {
+		snippet = snippet[:maxLength]
+		if lastSpace := strings.LastIndexAny(snippet, " \t"); lastSpace > 0 {
+			snippet = snippet[:lastSpace]
+		}
+		snippet += "..."
+	}
+
+	return snippet
 }
