@@ -125,7 +125,7 @@ func NewMarkdownRenderer(postDir string) MarkdownRenderer {
 func (r *MarkdownRendererImpl) Render(basename string, markdown []byte) (*MarkdownProcessingResult, error) {
 	title := extractPostTitle(markdown)
 	snippet := extractSnippet(markdown)
-	htmlBasename := strings.Replace(basename, ".md", ".html", 1)
+	htmlBasename := strings.TrimSuffix(basename, ".md") + ".html"
 	postPath := r.postDir + "/" + htmlBasename
 
 	file, err := os.Create(postPath)
