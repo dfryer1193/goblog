@@ -472,7 +472,7 @@ Intro
 
 [Link](posts/my-post.md)`,
 			expectedInHTML: []string{
-				`href="https://blog.werewolves.fyi/my-post.md"`,
+				`href="https://blog.werewolves.fyi/my-post"`,
 			},
 		},
 		{
@@ -482,7 +482,7 @@ Intro
 
 [Link](../other/page.html)`,
 			expectedInHTML: []string{
-				`href="https://blog.werewolves.fyi/page.html"`,
+				`href="https://blog.werewolves.fyi/page"`,
 			},
 		},
 	}
