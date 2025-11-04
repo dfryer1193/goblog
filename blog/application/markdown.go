@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -126,7 +127,7 @@ func (r *MarkdownRendererImpl) Render(basename string, markdown []byte) (*Markdo
 	title := extractPostTitle(markdown)
 	snippet := extractSnippet(markdown)
 	htmlBasename := strings.TrimSuffix(basename, ".md") + ".html"
-	postPath := r.postDir + "/" + htmlBasename
+	postPath := filepath.Join(r.postDir, htmlBasename)
 
 	file, err := os.Create(postPath)
 	if err != nil {
