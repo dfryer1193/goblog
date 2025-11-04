@@ -56,7 +56,9 @@ func (t *relativeLinkTransformer) Transform(node *ast.Document, reader text.Read
 			if imgOk {
 				img.Destination = []byte(t.domain + "/images/" + destFile)
 			} else if linkOk {
-				// TODO: Make sure this points at the html instead of the md file
+				// Strip .md and .html extensions from links
+				destFile = strings.TrimSuffix(destFile, ".md")
+				destFile = strings.TrimSuffix(destFile, ".html")
 				link.Destination = []byte(t.domain + "/" + destFile)
 			}
 		}
