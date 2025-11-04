@@ -288,6 +288,238 @@ func TestNewMarkdownRenderer(t *testing.T) {
 	}
 }
 
+func TestIsRelativeLink(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		{
+			name:     "Absolute HTTP URL",
+			url:      "http://example.com/page",
+			expected: false,
+		},
+		{
+			name:     "Absolute HTTPS URL",
+			url:      "https://example.com/page",
+			expected: false,
+		},
+		{
+			name:     "Protocol-relative URL",
+			url:      "//example.com/page",
+			expected: false,
+		},
+		{
+			name:     "Mailto link",
+			url:      "mailto:user@example.com",
+			expected: false,
+		},
+		{
+			name:     "Tel link",
+			url:      "tel:+1234567890",
+			expected: false,
+		},
+		{
+			name:     "Data URI",
+			url:      "data:image/png;base64,iVBOR...",
+			expected: false,
+		},
+		{
+			name:     "JavaScript URI",
+			url:      "javascript:alert('test')",
+			expected: false,
+		},
+		{
+			name:     "Absolute path",
+			url:      "/about/contact",
+			expected: true,
+		},
+		{
+			name:     "Relative path with ./",
+			url:      "./images/photo.jpg",
+			expected: true,
+		},
+		{
+			name:     "Relative path with ../",
+			url:      "../docs/readme.md",
+			expected: true,
+		},
+		{
+			name:     "Simple filename",
+			url:      "image.png",
+			expected: true,
+		},
+		{
+			name:     "Relative path",
+			url:      "posts/my-post.html",
+			expected: true,
+		},
+		{
+			name:     "Empty string",
+			url:      "",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isRelativeLink(tt.url)
+			if result != tt.expected {
+				t.Errorf("isRelativeLink(%q) = %v, want %v", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRelativeLinkTransformer(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "link-transformer-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	renderer := NewMarkdownRenderer(tmpDir)
+
+	tests := []struct {
+		name           string
+		markdown       string
+		expectedInHTML []string
+		notInHTML      []string
+	}{
+		{
+			name: "Relative link transformation",
+			markdown: `# Test
+Intro
+
+[Link to about](/about)`,
+			expectedInHTML: []string{
+				`href="https://blog.werewolves.fyi/about"`,
+			},
+		},
+		{
+			name: "Relative image transformation",
+			markdown: `# Test
+Intro
+
+![Alt text](photo.jpg)`,
+			expectedInHTML: []string{
+				`src="https://blog.werewolves.fyi/images/photo.jpg"`,
+			},
+		},
+		{
+			name: "Absolute link unchanged",
+			markdown: `# Test
+Intro
+
+[External](https://example.com/page)`,
+			expectedInHTML: []string{
+				`href="https://example.com/page"`,
+			},
+			notInHTML: []string{
+				"blog.werewolves.fyi",
+			},
+		},
+		{
+			name: "Absolute image unchanged",
+			markdown: `# Test
+Intro
+
+![Image](https://cdn.example.com/image.jpg)`,
+			expectedInHTML: []string{
+				`src="https://cdn.example.com/image.jpg"`,
+			},
+		},
+		{
+			name: "Protocol-relative URL unchanged",
+			markdown: `# Test
+Intro
+
+[Link](//example.com/page)`,
+			expectedInHTML: []string{
+				`href="//example.com/page"`,
+			},
+		},
+		{
+			name: "Mailto unchanged",
+			markdown: `# Test
+Intro
+
+[Email](mailto:test@example.com)`,
+			expectedInHTML: []string{
+				`href="mailto:test@example.com"`,
+			},
+		},
+		{
+			name: "Mixed links",
+			markdown: `# Test
+Intro
+
+[Relative](/contact)
+[Absolute](https://google.com)
+![Relative Image](logo.png)
+![Absolute Image](https://example.com/img.jpg)`,
+			expectedInHTML: []string{
+				`href="https://blog.werewolves.fyi/contact"`,
+				`href="https://google.com"`,
+				`src="https://blog.werewolves.fyi/images/logo.png"`,
+				`src="https://example.com/img.jpg"`,
+			},
+		},
+		{
+			name: "Relative path with directory",
+			markdown: `# Test
+Intro
+
+[Link](posts/my-post.md)`,
+			expectedInHTML: []string{
+				`href="https://blog.werewolves.fyi/my-post.md"`,
+			},
+		},
+		{
+			name: "Relative path with parent directory",
+			markdown: `# Test
+Intro
+
+[Link](../other/page.html)`,
+			expectedInHTML: []string{
+				`href="https://blog.werewolves.fyi/page.html"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			basename := "test-" + strings.ReplaceAll(tt.name, " ", "-") + ".md"
+			result, err := renderer.Render(basename, []byte(tt.markdown))
+			if err != nil {
+				t.Fatalf("Render failed: %v", err)
+			}
+
+			htmlPath := filepath.Join(tmpDir, result.HTMLPath)
+			content, err := os.ReadFile(htmlPath)
+			if err != nil {
+				t.Fatalf("Failed to read HTML file: %v", err)
+			}
+
+			html := string(content)
+
+			for _, expected := range tt.expectedInHTML {
+				if !strings.Contains(html, expected) {
+					t.Errorf("HTML does not contain expected string %q\nHTML:\n%s", expected, html)
+				}
+			}
+
+			for _, notExpected := range tt.notInHTML {
+				if strings.Contains(html, notExpected) && len(tt.expectedInHTML) > 0 {
+					// Only fail if we're explicitly checking something shouldn't be there
+					// and we have other expectations that should be there
+					t.Errorf("HTML contains unexpected string %q\nHTML:\n%s", notExpected, html)
+				}
+			}
+		})
+	}
+}
+
 func TestMarkdownRendererImpl_Render_HTMLOutput(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "markdown-html-test-*")
 	if err != nil {
