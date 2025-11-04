@@ -1,6 +1,7 @@
 package application
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -133,10 +134,14 @@ func (r *MarkdownRendererImpl) Render(basename string, markdown []byte) (*Markdo
 	}
 	defer file.Close()
 
-	r.renderer.Convert(markdown, file)
+	err = r.renderer.Convert(markdown, file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert markdown to HTML: %w", err)
+	}
+
 	err = file.Sync()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to sync HTML file to disk: %w", err)
 	}
 
 	return &MarkdownProcessingResult{
