@@ -21,7 +21,7 @@ func TestExtractPostTitle(t *testing.T) {
 		{
 			name:     "Title with extra spaces",
 			markdown: []byte("#   Title with spaces   \nContent"),
-			expected: "  Title with spaces",
+			expected: "Title with spaces",
 		},
 		{
 			name:     "No title",
@@ -153,58 +153,58 @@ func TestMarkdownRendererImpl_Render(t *testing.T) {
 	renderer := NewMarkdownRenderer(tmpDir)
 
 	tests := []struct {
-		name           string
-		basename       string
-		markdown       []byte
-		expectedTitle  string
-		expectedSnip   string
-		expectedHTML   string
-		shouldError    bool
+		name          string
+		basename      string
+		markdown      []byte
+		expectedTitle string
+		expectedSnip  string
+		expectedHTML  string
+		shouldError   bool
 	}{
 		{
-			name:           "Basic markdown rendering",
-			basename:       "test.md",
-			markdown:       []byte("# Hello World\nThis is a test paragraph.\n\nSome **bold** text"),
-			expectedTitle:  "Hello World",
-			expectedSnip:   "This is a test paragraph.",
-			expectedHTML:   "test.html",
-			shouldError:    false,
+			name:          "Basic markdown rendering",
+			basename:      "test.md",
+			markdown:      []byte("# Hello World\nThis is a test paragraph.\n\nSome **bold** text"),
+			expectedTitle: "Hello World",
+			expectedSnip:  "This is a test paragraph.",
+			expectedHTML:  "test.html",
+			shouldError:   false,
 		},
 		{
-			name:           "Markdown without title",
-			basename:       "notitle.md",
-			markdown:       []byte("Just some content here.\nMore content on line two."),
-			expectedTitle:  "Untitled Post",
-			expectedSnip:   "Just some content here. More content on line two.",
-			expectedHTML:   "notitle.html",
-			shouldError:    false,
+			name:          "Markdown without title",
+			basename:      "notitle.md",
+			markdown:      []byte("Just some content here.\nMore content on line two."),
+			expectedTitle: "Untitled Post",
+			expectedSnip:  "Just some content here. More content on line two.",
+			expectedHTML:  "notitle.html",
+			shouldError:   false,
 		},
 		{
-			name:           "Complex markdown with GFM features",
-			basename:       "complex.md",
-			markdown:       []byte("# Complex Post\nThis is my introduction paragraph.\n\n- [ ] Task 1\n- [x] Task 2\n\n| Col1 | Col2 |\n|------|------|\n| A    | B    |"),
-			expectedTitle:  "Complex Post",
-			expectedSnip:   "This is my introduction paragraph.",
-			expectedHTML:   "complex.html",
-			shouldError:    false,
+			name:          "Complex markdown with GFM features",
+			basename:      "complex.md",
+			markdown:      []byte("# Complex Post\nThis is my introduction paragraph.\n\n- [ ] Task 1\n- [x] Task 2\n\n| Col1 | Col2 |\n|------|------|\n| A    | B    |"),
+			expectedTitle: "Complex Post",
+			expectedSnip:  "This is my introduction paragraph.",
+			expectedHTML:  "complex.html",
+			shouldError:   false,
 		},
 		{
-			name:           "Multi-line paragraph",
-			basename:       "multiline.md",
-			markdown:       []byte("# Post Title\nFirst line of intro.\nSecond line of intro.\n\nSecond paragraph"),
-			expectedTitle:  "Post Title",
-			expectedSnip:   "First line of intro. Second line of intro.",
-			expectedHTML:   "multiline.html",
-			shouldError:    false,
+			name:          "Multi-line paragraph",
+			basename:      "multiline.md",
+			markdown:      []byte("# Post Title\nFirst line of intro.\nSecond line of intro.\n\nSecond paragraph"),
+			expectedTitle: "Post Title",
+			expectedSnip:  "First line of intro. Second line of intro.",
+			expectedHTML:  "multiline.html",
+			shouldError:   false,
 		},
 		{
-			name:           "Markdown with only title",
-			basename:       "titleonly.md",
-			markdown:       []byte("# Only a Title"),
-			expectedTitle:  "Only a Title",
-			expectedSnip:   "",
-			expectedHTML:   "titleonly.html",
-			shouldError:    false,
+			name:          "Markdown with only title",
+			basename:      "titleonly.md",
+			markdown:      []byte("# Only a Title"),
+			expectedTitle: "Only a Title",
+			expectedSnip:  "",
+			expectedHTML:  "titleonly.html",
+			shouldError:   false,
 		},
 	}
 

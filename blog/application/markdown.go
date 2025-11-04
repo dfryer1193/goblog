@@ -54,7 +54,6 @@ func NewMarkdownRenderer(postDir string) MarkdownRenderer {
 
 func (r *MarkdownRendererImpl) Render(basename string, markdown []byte) (*MarkdownProcessingResult, error) {
 	title := extractPostTitle(markdown)
-	// TODO: extract snippet
 	snippet := extractSnippet(markdown)
 	htmlBasename := strings.Replace(basename, ".md", ".html", 1)
 	postPath := r.postDir + "/" + htmlBasename
@@ -90,7 +89,7 @@ func extractPostTitle(markdown []byte) string {
 		return "Untitled Post"
 	}
 
-	return title
+	return strings.TrimSpace(title)
 }
 
 func extractSnippet(markdown []byte) string {
