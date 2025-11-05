@@ -1,8 +1,6 @@
 package application
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -144,13 +142,7 @@ func TestExtractSnippet(t *testing.T) {
 }
 
 func TestMarkdownRendererImpl_Render(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "markdown-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	renderer := NewMarkdownRenderer(tmpDir)
+	renderer := NewMarkdownRenderer()
 
 	tests := []struct {
 		name          string
@@ -210,7 +202,7 @@ func TestMarkdownRendererImpl_Render(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := renderer.Render(tt.basename, tt.markdown)
+			result, err := renderer.Render(tt.markdown)
 
 			if tt.shouldError && err == nil {
 				t.Error("Expected error but got none")
@@ -234,41 +226,31 @@ func TestMarkdownRendererImpl_Render(t *testing.T) {
 				t.Errorf("Snippet = %q, want %q", result.Snippet, tt.expectedSnip)
 			}
 
-			if result.HTMLPath != tt.expectedHTML {
-				t.Errorf("HTMLPath = %q, want %q", result.HTMLPath, tt.expectedHTML)
-			}
-
-			htmlPath := filepath.Join(tmpDir, tt.expectedHTML)
-			if _, err := os.Stat(htmlPath); os.IsNotExist(err) {
-				t.Errorf("HTML file was not created at %s", htmlPath)
-			}
-
-			content, err := os.ReadFile(htmlPath)
-			if err != nil {
-				t.Errorf("Failed to read HTML file: %v", err)
-			}
-			if len(tt.markdown) > 0 && len(content) == 0 {
-				t.Error("HTML file is empty")
+			if len(tt.markdown) > 0 && len(result.HTMLContent) == 0 {
+				t.Error("HTML content is empty")
 			}
 		})
 	}
 }
 
-func TestMarkdownRendererImpl_Render_FileWriteError(t *testing.T) {
-	invalidDir := "/nonexistent/invalid/path"
-	renderer := NewMarkdownRenderer(invalidDir)
+func TestMarkdownRendererImpl_Render_NoFileErrors(t *testing.T) {
+	// Renderer no longer writes files, so no file write errors
+	renderer := NewMarkdownRenderer()
 
 	markdown := []byte("# Test\nContent")
-	_, err := renderer.Render("test.md", markdown)
+	result, err := renderer.Render(markdown)
 
-	if err == nil {
-		t.Error("Expected error when writing to invalid directory, got nil")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	
+	if result == nil {
+		t.Error("Expected result, got nil")
 	}
 }
 
 func TestNewMarkdownRenderer(t *testing.T) {
-	postDir := "/tmp/test-posts"
-	renderer := NewMarkdownRenderer(postDir)
+	renderer := NewMarkdownRenderer()
 
 	if renderer == nil {
 		t.Fatal("NewMarkdownRenderer returned nil")
@@ -277,10 +259,6 @@ func TestNewMarkdownRenderer(t *testing.T) {
 	impl, ok := renderer.(*MarkdownRendererImpl)
 	if !ok {
 		t.Fatal("NewMarkdownRenderer did not return *MarkdownRendererImpl")
-	}
-
-	if impl.postDir != postDir {
-		t.Errorf("postDir = %q, want %q", impl.postDir, postDir)
 	}
 
 	if impl.renderer == nil {
@@ -372,13 +350,7 @@ func TestIsRelativeLink(t *testing.T) {
 }
 
 func TestRelativeLinkTransformer(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "link-transformer-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	renderer := NewMarkdownRenderer(tmpDir)
+	renderer := NewMarkdownRenderer()
 
 	tests := []struct {
 		name           string
@@ -489,19 +461,12 @@ Intro
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			basename := "test-" + strings.ReplaceAll(tt.name, " ", "-") + ".md"
-			result, err := renderer.Render(basename, []byte(tt.markdown))
+			result, err := renderer.Render([]byte(tt.markdown))
 			if err != nil {
 				t.Fatalf("Render failed: %v", err)
 			}
 
-			htmlPath := filepath.Join(tmpDir, result.HTMLPath)
-			content, err := os.ReadFile(htmlPath)
-			if err != nil {
-				t.Fatalf("Failed to read HTML file: %v", err)
-			}
-
-			html := string(content)
+			html := string(result.HTMLContent)
 
 			for _, expected := range tt.expectedInHTML {
 				if !strings.Contains(html, expected) {
@@ -521,13 +486,7 @@ Intro
 }
 
 func TestMarkdownRendererImpl_Render_HTMLOutput(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "markdown-html-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	renderer := NewMarkdownRenderer(tmpDir)
+	renderer := NewMarkdownRenderer()
 
 	tests := []struct {
 		name           string
@@ -580,19 +539,12 @@ Snippet
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			basename := "test-" + tt.name + ".md"
-			result, err := renderer.Render(basename, tt.markdown)
+			result, err := renderer.Render(tt.markdown)
 			if err != nil {
 				t.Fatalf("Render failed: %v", err)
 			}
 
-			htmlPath := filepath.Join(tmpDir, result.HTMLPath)
-			content, err := os.ReadFile(htmlPath)
-			if err != nil {
-				t.Fatalf("Failed to read HTML file: %v", err)
-			}
-
-			htmlStr := string(content)
+			htmlStr := string(result.HTMLContent)
 			for _, expected := range tt.expectedInHTML {
 				if !strings.Contains(htmlStr, expected) {
 					t.Errorf("HTML does not contain expected string %q", expected)

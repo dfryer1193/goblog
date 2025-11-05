@@ -1,10 +1,9 @@
 package application
 
 import (
+	"bytes"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -23,9 +22,9 @@ const (
 
 // MarkdownProcessingResult contains the results of processing a markdown file
 type MarkdownProcessingResult struct {
-	Title    string
-	Snippet  string
-	HTMLPath string
+	Title       string
+	Snippet     string
+	HTMLContent []byte
 }
 
 type relativeLinkTransformer struct {
@@ -89,15 +88,14 @@ func isRelativeLink(dest string) bool {
 
 // MarkdownRenderer defines the interface for converting markdown to HTML.
 type MarkdownRenderer interface {
-	Render(basename string, markdown []byte) (*MarkdownProcessingResult, error)
+	Render(markdown []byte) (*MarkdownProcessingResult, error)
 }
 
 type MarkdownRendererImpl struct {
-	postDir  string
 	renderer goldmark.Markdown
 }
 
-func NewMarkdownRenderer(postDir string) MarkdownRenderer {
+func NewMarkdownRenderer() MarkdownRenderer {
 	// TODO: Implement custom domains for relative links
 	renderer := goldmark.New(
 		goldmark.WithExtensions(
@@ -120,37 +118,24 @@ func NewMarkdownRenderer(postDir string) MarkdownRenderer {
 	)
 
 	return &MarkdownRendererImpl{
-		postDir:  postDir,
 		renderer: renderer,
 	}
 }
 
-func (r *MarkdownRendererImpl) Render(basename string, markdown []byte) (*MarkdownProcessingResult, error) {
+func (r *MarkdownRendererImpl) Render(markdown []byte) (*MarkdownProcessingResult, error) {
 	title := extractPostTitle(markdown)
 	snippet := extractSnippet(markdown)
-	htmlBasename := strings.TrimSuffix(basename, ".md") + ".html"
-	postPath := filepath.Join(r.postDir, htmlBasename)
-
-	file, err := os.Create(postPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	err = r.renderer.Convert(markdown, file)
+	
+	var buf bytes.Buffer
+	err := r.renderer.Convert(markdown, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert markdown to HTML: %w", err)
 	}
 
-	err = file.Sync()
-	if err != nil {
-		return nil, fmt.Errorf("failed to sync HTML file to disk: %w", err)
-	}
-
 	return &MarkdownProcessingResult{
-		Title:    title,
-		Snippet:  snippet,
-		HTMLPath: htmlBasename,
+		Title:       title,
+		Snippet:     snippet,
+		HTMLContent: buf.Bytes(),
 	}, nil
 }
 
