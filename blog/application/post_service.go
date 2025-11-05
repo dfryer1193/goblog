@@ -70,21 +70,33 @@ func (s *PostService) SyncRepositoryChanges() error {
 		return fmt.Errorf("failed to retrieve branches: %w", err)
 	}
 
+	var errs []error
 	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
 	for _, branch := range branches {
-		s.processBranches(lastUpdatedAt, []*github.Branch{branch})
+		if err := s.processBranches(lastUpdatedAt, []*github.Branch{branch}); err != nil {
+			errs = append(errs, fmt.Errorf("branch %s: %w", *branch.Name, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to sync %d branches: %v", len(errs), errs)
 	}
 
 	return nil
 }
 
 func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*github.Branch) error {
+	var errs []error
 	for _, b := range branches {
 		err := s.processBranch(lastUpdatedAt, b)
 		if err != nil {
 			log.Error().Err(err).Str("branch", *b.Name).Msg("Failed to process branch")
-			continue
+			errs = append(errs, err)
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("encountered %d errors processing branches", len(errs))
 	}
 
 	return nil
