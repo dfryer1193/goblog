@@ -50,14 +50,14 @@ func (s *SQLiteDB) Connect() error {
 		return fmt.Errorf("database already connected")
 	}
 
-	conn, err := sql.Open("sqlite", s.dbPath)
+	db, err := sql.Open("sqlite", s.dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
 	// Test the connection
-	if err := conn.Ping(); err != nil {
-		conn.Close()
+	if err := db.Ping(); err != nil {
+		db.Close()
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -71,17 +71,17 @@ func (s *SQLiteDB) Connect() error {
 	}
 
 	for _, pragma := range pragmas {
-		if _, err := conn.Exec(pragma); err != nil {
-			conn.Close()
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
 			return fmt.Errorf("failed to set pragma %q: %w", pragma, err)
 		}
 	}
 
-	s.db = conn
+	s.db = db
 
 	// Run migrations
-	if err := runMigrations(conn); err != nil {
-		conn.Close()
+	if err := runMigrations(db); err != nil {
+		db.Close()
 		s.db = nil
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,55 +12,34 @@ import (
 
 	"github.com/dfryer1193/goblog/blog/application"
 	"github.com/dfryer1193/goblog/blog/persistence"
-	gh "github.com/dfryer1193/goblog/shared/github"
+	"github.com/dfryer1193/goblog/shared/db/sqlite"
 
-	"github.com/dfryer1193/goblog/shared/db"
-	"github.com/google/go-github/v75/github"
 	"github.com/dfryer1193/mjolnir/router"
+
 	"github.com/rs/zerolog/log"
 )
 
 const (
 	port            = 8080
 	shutdownTimeout = 5 * time.Second
-	// TODO: Load from config
-	ghOwner = "dfryer1193"
-	ghRepo  = "goblog-posts"
+	repo            = "https://github.com/dfryer1193/blog"
+	authTokenEnv    = "GITHUB_AUTH_TOKEN"
+	postDir         = "/posts"
 )
 
-// TODO: implement a real markdown renderer
- type placeholderMarkdownRenderer struct{}
-
-func (p placeholderMarkdownRenderer) Render(markdown string) (string, error) {
-	return "<p>" + markdown + "</p>", nil
-}
-
 func main() {
-	// Initialize dependencies
-	dbConn, err := db.GetConnection(context.Background(), "blog.db")
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
-	}
-	defer dbConn.Close()
-
-	// TODO: set up authenticated client
-	ghClient := github.NewClient(nil)
-	sourceRepo := gh.NewGithubSourceRepository(ghClient, ghOwner, ghRepo)
-
-	mainBranchName, err := sourceRepo.GetDefaultBranchName(context.Background())
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to get default branch name")
+	authToken := os.Getenv(authTokenEnv)
+	if authToken == "" {
+		log.Fatal().Msgf("Environment variable %s is not set", authTokenEnv)
 	}
 
-	postRepo := persistence.NewPostRepository(dbConn)
-	markdownRenderer := placeholderMarkdownRenderer{}
+	dbClient := sqlite.NewSQLiteDB(sqlite.NewSQLiteConfig())
+	defer dbClient.Close()
 
-	postService := application.NewPostService(postRepo, sourceRepo, markdownRenderer, mainBranchName)
-	defer func() {
-		if err := postService.Close(); err != nil {
-			log.Error().Err(err).Msg("Failed to gracefully close post service")
-		}
-	}()
+	// TODO: Build database client as an sql.DB
+	var db *sql.DB
+	postRepo := persistence.NewPostRepository()
+	postService := application.NewPostService(postRepo, dbClient)
 
 	r := router.New()
 
@@ -88,4 +68,20 @@ func main() {
 	}
 
 	log.Info().Msg("Server stopped")
+}
+
+func ensurePostDir(path string) error {
+	fileInfo, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		err = os.MkdirAll(path, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !fileInfo.IsDir() {
+		return errors.New("postDir is not a directory")
+	}
+
+	return nil
 }
