@@ -2,20 +2,22 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/dfryer1193/goblog/blog/application"
 	"github.com/dfryer1193/goblog/blog/persistence"
 	"github.com/dfryer1193/goblog/shared/db/sqlite"
+	ghrepo "github.com/dfryer1193/goblog/shared/github"
 
 	"github.com/dfryer1193/mjolnir/router"
 
+	"github.com/google/go-github/v75/github"
 	"github.com/rs/zerolog/log"
 )
 
@@ -24,6 +26,7 @@ const (
 	shutdownTimeout = 5 * time.Second
 	repo            = "https://github.com/dfryer1193/blog"
 	authTokenEnv    = "GITHUB_AUTH_TOKEN"
+	mainBranch      = "main"
 	postDir         = "/posts"
 )
 
@@ -36,10 +39,31 @@ func main() {
 	dbClient := sqlite.NewSQLiteDB(sqlite.NewSQLiteConfig())
 	defer dbClient.Close()
 
-	// TODO: Build database client as an sql.DB
-	var db *sql.DB
-	postRepo := persistence.NewPostRepository()
-	postService := application.NewPostService(postRepo, dbClient)
+	// Get the underlying sql.DB instance
+	db := dbClient.DB()
+	postRepo := persistence.NewPostRepository(db)
+	imageRepo := persistence.NewImageRepository(db)
+
+	// Create GitHub client and source repository
+	ghClient := github.NewClient(nil).WithAuthToken(authToken)
+	parts := strings.Split(strings.TrimPrefix(repo, "https://github.com/"), "/")
+	if len(parts) != 2 {
+		log.Fatal().Msgf("Invalid repository URL: %s", repo)
+	}
+	owner, gitRepo := parts[0], parts[1]
+	sourceRepo := ghrepo.NewGithubSourceRepository(ghClient, owner, gitRepo)
+
+	// Create markdown renderer
+	markdownRenderer := application.NewMarkdownRenderer()
+
+	// Get main branch name
+	mainBranchName := mainBranch
+	defaultBranch, err := sourceRepo.GetDefaultBranchName(context.Background())
+	if err == nil {
+		mainBranchName = defaultBranch
+	}
+
+	postService := application.NewPostService(postRepo, imageRepo, sourceRepo, markdownRenderer, mainBranchName)
 	defer postService.Close()
 
 	r := router.New()
@@ -69,20 +93,4 @@ func main() {
 	}
 
 	log.Info().Msg("Server stopped")
-}
-
-func ensurePostDir(path string) error {
-	fileInfo, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		err = os.MkdirAll(path, os.ModePerm)
-		if err != nil {
-			return err
-		}
-	}
-
-	if !fileInfo.IsDir() {
-		return errors.New("postDir is not a directory")
-	}
-
-	return nil
 }
