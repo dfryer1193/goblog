@@ -118,7 +118,9 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 	}
 
 	for _, imagePath := range analysisResult.imagesToRemove.Items() {
-		s.removeImage(imagePath)
+		if err := s.removeImage(imagePath); err != nil {
+			return err
+		}
 	}
 
 	s.upsertPosts(analysisResult.posts, branch)
@@ -512,13 +514,13 @@ func (s *PostService) processImageFile(ctx context.Context, imagePath string, co
 
 // removeImage deletes an image file from both filesystem and database
 // The repository handles both operations transactionally
-func (s *PostService) removeImage(imagePath string) {
+func (s *PostService) removeImage(imagePath string) error {
 	if err := s.imageRepo.DeleteImage(s.ctx, imagePath); err != nil {
-		log.Error().Err(err).Str("path", imagePath).Msg("Failed to remove image")
-		return
+		return err
 	}
 
 	log.Info().Str("path", imagePath).Msg("Image removed successfully")
+	return nil
 }
 
 // calculateHash computes a SHA-256 hash of the given content
