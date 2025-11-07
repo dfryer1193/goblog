@@ -4,78 +4,96 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/dfryer1193/goblog/blog/domain"
-	"github.com/jmoiron/sqlx"
+	"github.com/dfryer1193/goblog/shared/db"
 )
 
 var _ domain.PostRepository = (*SQLitePostRepository)(nil)
 
+const postDir = "./posts"
+
 // SQLitePostRepository implements domain.PostRepository using SQL database (SQLite)
 type SQLitePostRepository struct {
-	db *sqlx.DB
+	db *sql.DB
 }
 
 // NewPostRepository creates a new SQLitePostRepository from a standard sql.DB
 func NewPostRepository(db *sql.DB) *SQLitePostRepository {
 	return &SQLitePostRepository{
-		db: sqlx.NewDb(db, "sqlite"),
+		db: db,
 	}
 }
 
 const upsertPostQuery = `
-		INSERT INTO posts (id, title, snippet, html_path, updated_at, published_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			title = excluded.title,
-			snippet = excluded.snippet,
-			html_path = excluded.html_path,
-			updated_at = excluded.updated_at,
-			published_at = excluded.published_at,
-			created_at = COALESCE(posts.created_at, excluded.created_at)
+	INSERT INTO posts (id, title, snippet, html_path, updated_at, published_at, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		title = excluded.title,
+		snippet = excluded.snippet,
+		html_path = excluded.html_path,
+		updated_at = excluded.updated_at,
+		published_at = excluded.published_at,
+		created_at = COALESCE(posts.created_at, excluded.created_at)
 `
 
-// UpsertPost inserts or updates a post in the database
-// Uses INSERT ... ON CONFLICT for SQLite (requires SQLite 3.24.0+)
-func (r *SQLitePostRepository) UpsertPost(ctx context.Context, p *domain.Post) error {
+// SavePost saves a post to both filesystem and database within a transaction
+func (r *SQLitePostRepository) SavePost(ctx context.Context, p *domain.Post) error {
 	if p == nil {
 		return fmt.Errorf("post cannot be nil")
 	}
 
-	// Convert time.Time to nullable types for SQL
-	// Zero time values should be stored as NULL
-	var updatedAt, publishedAt, createdAt any
-
-	if !p.UpdatedAt.IsZero() {
-		updatedAt = p.UpdatedAt
+	if p.ID == "" {
+		return fmt.Errorf("post ID cannot be empty")
 	}
 
-	if !p.PublishedAt.IsZero() {
-		publishedAt = p.PublishedAt
-	}
+	// Run filesystem and database operations in a transaction
+	return db.RunInTransaction(ctx, r.db, func(txCtx context.Context) error {
+		// Upsert to database first
+		var updatedAt, publishedAt, createdAt any
 
-	if !p.CreatedAt.IsZero() {
-		createdAt = p.CreatedAt
-	}
+		if !p.UpdatedAt.IsZero() {
+			updatedAt = p.UpdatedAt
+		}
 
-	query := upsertPostQuery
+		if !p.PublishedAt.IsZero() {
+			publishedAt = p.PublishedAt
+		}
 
-	_, err := r.db.ExecContext(ctx, query,
-		p.ID,
-		p.Title,
-		p.Snippet,
-		p.HTMLPath,
-		updatedAt,
-		publishedAt,
-		createdAt,
-	)
+		if !p.CreatedAt.IsZero() {
+			createdAt = p.CreatedAt
+		}
 
-	if err != nil {
-		return fmt.Errorf("failed to upsert post: %w", err)
-	}
+		executor := db.GetExecutor(txCtx, r.db)
+		_, err := executor.ExecContext(txCtx, upsertPostQuery,
+			p.ID,
+			p.Title,
+			p.Snippet,
+			p.HTMLPath,
+			updatedAt,
+			publishedAt,
+			createdAt,
+		)
 
-	return nil
+		if err != nil {
+			return fmt.Errorf("failed to upsert post: %w", err)
+		}
+
+		// Then write to filesystem - if this fails, transaction rolls back
+		if err := os.MkdirAll(postDir, 0755); err != nil {
+			return fmt.Errorf("failed to create post directory: %w", err)
+		}
+
+		localPath := filepath.Join(postDir, p.HTMLPath)
+		if err := os.WriteFile(localPath, p.HTMLContent, 0644); err != nil {
+			return fmt.Errorf("failed to write post file: %w", err)
+		}
+
+		return nil
+	})
 }
 
 const getPostQuery = `
@@ -91,7 +109,15 @@ func (r *SQLitePostRepository) GetPost(ctx context.Context, id string) (*domain.
 	}
 
 	var row postRow
-	err := r.db.GetContext(ctx, &row, getPostQuery, id)
+	err := r.db.QueryRowContext(ctx, getPostQuery, id).Scan(
+		&row.ID,
+		&row.Title,
+		&row.Snippet,
+		&row.HTMLPath,
+		&row.UpdatedAt,
+		&row.PublishedAt,
+		&row.CreatedAt,
+	)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("post not found: %s", id)
@@ -110,10 +136,8 @@ const getLatestUpdatedTimeQuery = `
 
 // GetLatestUpdatedTime returns the latest updated_at time across all posts
 func (r *SQLitePostRepository) GetLatestUpdatedTime(ctx context.Context) (time.Time, error) {
-	query := getLatestUpdatedTimeQuery
-
 	var latestUpdated sql.NullTime
-	err := r.db.GetContext(ctx, &latestUpdated, query)
+	err := r.db.QueryRowContext(ctx, getLatestUpdatedTimeQuery).Scan(&latestUpdated)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return time.Time{}, nil
@@ -129,11 +153,11 @@ func (r *SQLitePostRepository) GetLatestUpdatedTime(ctx context.Context) (time.T
 }
 
 const listPublishedPostsQuery = `
-		SELECT id, title, snippet, html_path, updated_at, published_at, created_at
-		FROM posts
-		WHERE published_at IS NOT NULL
-		ORDER BY published_at DESC
-		LIMIT ? OFFSET ?
+	SELECT id, title, snippet, html_path, updated_at, published_at, created_at
+	FROM posts
+	WHERE published_at IS NOT NULL
+	ORDER BY published_at DESC
+	LIMIT ? OFFSET ?
 `
 
 // ListPublishedPosts retrieves published posts ordered by publish date descending
@@ -146,17 +170,32 @@ func (r *SQLitePostRepository) ListPublishedPosts(ctx context.Context, limit, of
 		offset = 0
 	}
 
-	var rows []postRow
-	err := r.db.SelectContext(ctx, &rows, listPublishedPostsQuery, limit, offset)
-
+	rows, err := r.db.QueryContext(ctx, listPublishedPostsQuery, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list published posts: %w", err)
 	}
+	defer rows.Close()
 
-	// Convert to domain.Post slice
-	posts := make([]*domain.Post, 0, len(rows))
-	for _, row := range rows {
+	posts := make([]*domain.Post, 0)
+	for rows.Next() {
+		var row postRow
+		err := rows.Scan(
+			&row.ID,
+			&row.Title,
+			&row.Snippet,
+			&row.HTMLPath,
+			&row.UpdatedAt,
+			&row.PublishedAt,
+			&row.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan post row: %w", err)
+		}
 		posts = append(posts, row.toDomain())
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating post rows: %w", err)
 	}
 
 	return posts, nil

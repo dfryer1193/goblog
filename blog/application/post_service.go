@@ -2,8 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"path"
 	"regexp"
 	"sync"
 	"time"
@@ -15,7 +16,8 @@ import (
 )
 
 var (
-	postPathRegex = regexp.MustCompile(`^posts/(\d+)-.*\.md$`)
+	postPathRegex  = regexp.MustCompile(`^posts/(\d+)-.*\.md$`)
+	imagePathRegex = regexp.MustCompile(`^images/.*\.(jpg|jpeg|png|gif|svg|webp|avif)$`)
 )
 
 type PostService struct {
@@ -28,10 +30,11 @@ type PostService struct {
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
 
-	repo domain.PostRepository
+	repo      domain.PostRepository
+	imageRepo domain.ImageRepository
 }
 
-func NewPostService(repo domain.PostRepository, sourceRepo domain.SourceRepository, markdown MarkdownRenderer, mainBranchName string) *PostService {
+func NewPostService(repo domain.PostRepository, imageRepo domain.ImageRepository, sourceRepo domain.SourceRepository, markdown MarkdownRenderer, mainBranchName string) *PostService {
 	ctx, cancel := context.WithCancel(context.Background())
 	wg := sync.WaitGroup{}
 	return &PostService{
@@ -42,6 +45,7 @@ func NewPostService(repo domain.PostRepository, sourceRepo domain.SourceReposito
 		cancel:         cancel,
 		wg:             &wg,
 		repo:           repo,
+		imageRepo:      imageRepo,
 	}
 }
 
@@ -66,21 +70,26 @@ func (s *PostService) SyncRepositoryChanges() error {
 		return fmt.Errorf("failed to retrieve branches: %w", err)
 	}
 
-	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
-	for _, branch := range branches {
-		s.processBranches(lastUpdatedAt, []*github.Branch{branch})
+	err = s.processBranches(lastUpdatedAt, branches)
+	if err != nil {
+		return fmt.Errorf("failed to process branches: %w", err)
 	}
 
 	return nil
 }
 
 func (s *PostService) processBranches(lastUpdatedAt time.Time, branches []*github.Branch) error {
+	var errs []error
 	for _, b := range branches {
 		err := s.processBranch(lastUpdatedAt, b)
 		if err != nil {
 			log.Error().Err(err).Str("branch", *b.Name).Msg("Failed to process branch")
-			continue
+			errs = append(errs, err)
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("encountered %d errors processing branches", len(errs))
 	}
 
 	return nil
@@ -96,19 +105,26 @@ func (s *PostService) processBranch(lastUpdatedAt time.Time, branch *github.Bran
 		return nil
 	}
 
-	filesToProcess, filesToRemove, err := s.analyzeCommitFiles(commits)
+	analysisResult, err := s.analyzeCommitFiles(commits)
 	if err != nil {
 		return fmt.Errorf("failed to analyze commits for branch %s: %w", *branch.Name, err)
 	}
 
-	for _, f := range filesToRemove.Items() {
+	for _, f := range analysisResult.postsToRemove.Items() {
 		err := s.repo.Unpublish(s.ctx, f)
 		if err != nil {
 			return err
 		}
 	}
 
-	s.upsertPosts(filesToProcess, branch)
+	for _, imagePath := range analysisResult.imagesToRemove.Items() {
+		if err := s.removeImage(imagePath); err != nil {
+			return err
+		}
+	}
+
+	s.upsertPosts(analysisResult.posts, branch)
+	s.processImages(analysisResult.images, branch)
 
 	return nil
 }
@@ -119,13 +135,17 @@ func handleCommitFile(
 	previousPath string,
 	fullCommit *github.RepositoryCommit,
 	filesToProcess map[string]*github.RepositoryCommit,
+	imagesToProcess map[string]*github.RepositoryCommit,
 	filesToRemove set.Set[string],
-) (map[string]*github.RepositoryCommit, set.Set[string]) {
+	imagesToRemove set.Set[string],
+) (map[string]*github.RepositoryCommit, map[string]*github.RepositoryCommit, set.Set[string], set.Set[string]) {
 	currentIsPost := isPostFile(path)
 	previousIsPost := isPostFile(previousPath)
+	currentIsImage := isImageFile(path)
+	previousIsImage := isImageFile(previousPath)
 
-	if !currentIsPost && !previousIsPost {
-		return filesToProcess, filesToRemove
+	if !currentIsPost && !previousIsPost && !currentIsImage && !previousIsImage {
+		return filesToProcess, imagesToProcess, filesToRemove, imagesToRemove
 	}
 
 	switch status {
@@ -136,12 +156,24 @@ func handleCommitFile(
 			}
 			filesToRemove.Remove(path)
 		}
+		if currentIsImage {
+			if _, exists := imagesToProcess[path]; !exists {
+				imagesToProcess[path] = fullCommit
+			}
+			imagesToRemove.Remove(path)
+		}
 	case "removed":
 		if currentIsPost {
 			if _, exists := filesToProcess[path]; !exists {
 				filesToRemove.Add(path)
 			}
 			delete(filesToProcess, path)
+		}
+		if currentIsImage {
+			if _, exists := imagesToProcess[path]; !exists {
+				imagesToRemove.Add(path)
+			}
+			delete(imagesToProcess, path)
 		}
 	case "renamed":
 		if previousIsPost {
@@ -156,27 +188,64 @@ func handleCommitFile(
 			}
 			filesToRemove.Remove(previousPath)
 		}
+		if previousIsImage {
+			if _, exists := imagesToProcess[previousPath]; !exists {
+				imagesToRemove.Add(previousPath)
+			}
+			delete(imagesToProcess, previousPath)
+		}
+		if currentIsImage {
+			if _, exists := imagesToProcess[path]; !exists {
+				imagesToProcess[path] = fullCommit
+			}
+			imagesToRemove.Remove(path)
+		}
 	}
 
-	return filesToProcess, filesToRemove
+	return filesToProcess, imagesToProcess, filesToRemove, imagesToRemove
+}
+
+// commitAnalysisResult holds the results of analyzing commits
+type commitAnalysisResult struct {
+	posts          map[string]*github.RepositoryCommit
+	images         map[string]*github.RepositoryCommit
+	postsToRemove  set.Set[string]
+	imagesToRemove set.Set[string]
 }
 
 // analyzeCommitFiles iterates through commits to determine which files were changed and which were removed.
-func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (map[string]*github.RepositoryCommit, set.Set[string], error) {
-	filesToProcess := make(map[string]*github.RepositoryCommit)
-	filesToRemove := set.New[string]()
+func (s *PostService) analyzeCommitFiles(commits []*github.RepositoryCommit) (*commitAnalysisResult, error) {
+	posts := make(map[string]*github.RepositoryCommit)
+	images := make(map[string]*github.RepositoryCommit)
+	postsToRemove := set.New[string]()
+	imagesToRemove := set.New[string]()
 
 	for _, commitSummary := range commits {
 		fullCommit, err := s.sourceRepo.GetCommit(s.ctx, *commitSummary.SHA)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get full commit %s: %w", *commitSummary.SHA, err)
+			return nil, fmt.Errorf("failed to get full commit %s: %w", *commitSummary.SHA, err)
 		}
 
 		for _, file := range fullCommit.Files {
-			filesToProcess, filesToRemove = handleCommitFile(file.GetFilename(), file.GetStatus(), file.GetPreviousFilename(), fullCommit, filesToProcess, filesToRemove)
+			posts, images, postsToRemove, imagesToRemove = handleCommitFile(
+				file.GetFilename(),
+				file.GetStatus(),
+				file.GetPreviousFilename(),
+				fullCommit,
+				posts,
+				images,
+				postsToRemove,
+				imagesToRemove,
+			)
 		}
 	}
-	return filesToProcess, filesToRemove, nil
+
+	return &commitAnalysisResult{
+		posts:          posts,
+		images:         images,
+		postsToRemove:  postsToRemove,
+		imagesToRemove: imagesToRemove,
+	}, nil
 }
 
 // upsertPosts processes and upserts posts from the given filesToProcess map
@@ -245,7 +314,7 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 	}
 
 	// Analyze all commits to determine which files to process
-	filesToProcess, filesToRemove, err := s.analyzeCommitFiles(commits)
+	analysisResult, err := s.analyzeCommitFiles(commits)
 	if err != nil {
 		return fmt.Errorf("failed to analyze commits: %w", err)
 	}
@@ -254,7 +323,7 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 	isMainBranch := ref == "refs/heads/"+s.mainBranchName
 
 	if isMainBranch {
-		for _, filePath := range filesToRemove.Items() {
+		for _, filePath := range analysisResult.postsToRemove.Items() {
 			capturedPath := filePath
 			s.wg.Go(func() {
 				if err := s.repo.Unpublish(s.ctx, capturedPath); err != nil {
@@ -262,10 +331,17 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 				}
 			})
 		}
+
+		for _, imagePath := range analysisResult.imagesToRemove.Items() {
+			capturedPath := imagePath
+			s.wg.Go(func() {
+				s.removeImage(capturedPath)
+			})
+		}
 	}
 
-	// Process additions/modifications
-	for filePath, commit := range filesToProcess {
+	// Process post additions/modifications
+	for filePath, commit := range analysisResult.posts {
 		postID := extractPostID(filePath)
 		if postID == "" {
 			continue
@@ -302,6 +378,16 @@ func (s *PostService) HandlePushEvent(evt *github.PushEvent) error {
 		})
 	}
 
+	// Process image additions/modifications
+	for imagePath, commit := range analysisResult.images {
+		capturedPath := imagePath
+		capturedCommitSHA := commit.GetSHA()
+
+		s.wg.Go(func() {
+			s.processImageFile(s.ctx, capturedPath, capturedCommitSHA)
+		})
+	}
+
 	return nil
 }
 
@@ -314,31 +400,34 @@ func (s *PostService) processPostFile(
 	commitSHA string,
 	isMainBranch bool,
 ) {
-	fileBasename := path.Base(fileInfo.path)
 	markdownContent, err := s.sourceRepo.GetFileContents(ctx, fileInfo.path, commitSHA)
 	if err != nil {
 		log.Error().Err(err).Str("path", fileInfo.path).Str("commitSHA", commitSHA).Msg("Failed to get file contents")
 		return
 	}
 
-	result, err := s.markdown.Render(fileBasename, markdownContent)
+	result, err := s.markdown.Render(markdownContent)
 	if err != nil {
 		log.Error().Err(err).Str("path", fileInfo.path).Msg("Failed to render markdown")
 		return
 	}
 
+	// Derive HTML filename from post ID
+	htmlFilename := postID + ".html"
+
 	post := &domain.Post{
-		ID:        postID,
-		Title:     result.Title,
-		Snippet:   result.Snippet,
-		HTMLPath:  result.HTMLPath,
-		UpdatedAt: fileInfo.modifiedAt,
-		CreatedAt: fileInfo.createdAt,
+		ID:          postID,
+		Title:       result.Title,
+		Snippet:     result.Snippet,
+		HTMLPath:    htmlFilename,
+		HTMLContent: result.HTMLContent,
+		UpdatedAt:   fileInfo.modifiedAt,
+		CreatedAt:   fileInfo.createdAt,
 	}
 
-	err = s.repo.UpsertPost(ctx, post)
+	err = s.repo.SavePost(ctx, post)
 	if err != nil {
-		log.Error().Err(err).Str("postID", postID).Msg("Failed to upsert post")
+		log.Error().Err(err).Str("postID", postID).Msg("Failed to save post")
 		return
 	}
 
@@ -372,4 +461,70 @@ func extractPostID(path string) string {
 		return ""
 	}
 	return matches[1]
+}
+
+// isImageFile checks if a file path is a valid image file in the images/ directory
+func isImageFile(path string) bool {
+	return imagePathRegex.MatchString(path)
+}
+
+// processImages processes multiple image files synchronously
+func (s *PostService) processImages(imagesToProcess map[string]*github.RepositoryCommit, branch *github.Branch) {
+	for imagePath, commit := range imagesToProcess {
+		s.processImageFile(s.ctx, imagePath, commit.GetSHA())
+	}
+}
+
+// processImageFile downloads and saves an image file from the repository
+// The repository handles both database and filesystem persistence transactionally
+func (s *PostService) processImageFile(ctx context.Context, imagePath string, commitSHA string) {
+	imageContent, err := s.sourceRepo.GetFileContents(ctx, imagePath, commitSHA)
+	if err != nil {
+		log.Error().Err(err).Str("path", imagePath).Str("commitSHA", commitSHA).Msg("Failed to get image contents")
+		return
+	}
+
+	// Calculate hash of the image content
+	hash := calculateHash(imageContent)
+
+	// Check if image exists and has the same hash
+	existingImage, err := s.imageRepo.GetImage(ctx, imagePath)
+	if err == nil && existingImage.Hash == hash {
+		log.Debug().Str("path", imagePath).Str("hash", hash).Msg("Image unchanged, skipping")
+		return
+	}
+
+	// Save image (repository handles transaction)
+	now := time.Now().UTC()
+	img := &domain.Image{
+		Path:      imagePath,
+		Hash:      hash,
+		Content:   imageContent,
+		UpdatedAt: now,
+		CreatedAt: now,
+	}
+
+	if err := s.imageRepo.SaveImage(ctx, img); err != nil {
+		log.Error().Err(err).Str("path", imagePath).Msg("Failed to save image")
+		return
+	}
+
+	log.Info().Str("path", imagePath).Str("hash", hash).Msg("Image processed successfully")
+}
+
+// removeImage deletes an image file from both filesystem and database
+// The repository handles both operations transactionally
+func (s *PostService) removeImage(imagePath string) error {
+	if err := s.imageRepo.DeleteImage(s.ctx, imagePath); err != nil {
+		return err
+	}
+
+	log.Info().Str("path", imagePath).Msg("Image removed successfully")
+	return nil
+}
+
+// calculateHash computes a SHA-256 hash of the given content
+func calculateHash(content []byte) string {
+	hash := sha256.Sum256(content)
+	return hex.EncodeToString(hash[:])
 }

@@ -13,13 +13,16 @@ type Post struct {
 	Title       string
 	Snippet     string
 	HTMLPath    string
+	HTMLContent []byte
 	UpdatedAt   time.Time
 	PublishedAt time.Time
 	CreatedAt   time.Time
 }
 
 type PostRepository interface {
-	UpsertPost(ctx context.Context, p *Post) error
+	// SavePost saves a post to both filesystem and database
+	SavePost(ctx context.Context, p *Post) error
+	
 	GetPost(ctx context.Context, id string) (*Post, error)
 	GetLatestUpdatedTime(ctx context.Context) (time.Time, error)
 	ListPublishedPosts(ctx context.Context, limit int, offset int) ([]*Post, error)

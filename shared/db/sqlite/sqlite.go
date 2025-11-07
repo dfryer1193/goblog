@@ -29,20 +29,21 @@ func NewSQLiteConfig() *SQLiteConfig {
 	}
 }
 
-// SQLiteDB implements the db.Database interface for SQLite
+// SQLiteDB implements both db.Database and db.TransactionManager interfaces
 type SQLiteDB struct {
 	dbPath string
 	db     *sql.DB
 }
 
 // NewSQLiteDB creates a new SQLite database instance
-// If dbPath is empty, it will use the SQLITE_DB_PATH environment variable
-// If that's also empty, it defaults to "./goblog.db"
 func NewSQLiteDB(cfg *SQLiteConfig) db.Database {
 	return &SQLiteDB{
 		dbPath: cfg.Path,
 	}
 }
+
+// Ensure SQLiteDB implements Database interface
+var _ db.Database = (*SQLiteDB)(nil)
 
 // Connect opens a connection to the SQLite database
 func (s *SQLiteDB) Connect() error {

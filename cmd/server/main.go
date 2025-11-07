@@ -40,6 +40,7 @@ func main() {
 	var db *sql.DB
 	postRepo := persistence.NewPostRepository()
 	postService := application.NewPostService(postRepo, dbClient)
+	defer postService.Close()
 
 	r := router.New()
 

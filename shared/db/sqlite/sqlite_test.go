@@ -37,13 +37,9 @@ func TestNewSQLiteDB(t *testing.T) {
 			cfg := NewSQLiteConfig()
 
 			database := NewSQLiteDB(cfg)
-			sqliteDB, ok := database.(*SQLiteDB)
-			if !ok {
-				t.Fatal("expected *SQLiteDB type")
-			}
-
-			if sqliteDB.dbPath != tt.want {
-				t.Errorf("dbPath = %v, want %v", sqliteDB.dbPath, tt.want)
+			
+			if database.dbPath != tt.want {
+				t.Errorf("dbPath = %v, want %v", database.dbPath, tt.want)
 			}
 		})
 	}
@@ -55,13 +51,9 @@ func TestNewSQLiteDBWithExplicitPath(t *testing.T) {
 	}
 
 	database := NewSQLiteDB(cfg)
-	sqliteDB, ok := database.(*SQLiteDB)
-	if !ok {
-		t.Fatal("expected *SQLiteDB type")
-	}
-
-	if sqliteDB.dbPath != "/tmp/test.db" {
-		t.Errorf("dbPath = %v, want %v", sqliteDB.dbPath, "/tmp/test.db")
+	
+	if database.dbPath != "/tmp/test.db" {
+		t.Errorf("dbPath = %v, want %v", database.dbPath, "/tmp/test.db")
 	}
 }
 

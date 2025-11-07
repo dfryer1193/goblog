@@ -35,13 +35,14 @@ func TestPostRepository_UpsertPost_Insert(t *testing.T) {
 		ID:          "001",
 		Title:       "Test Post",
 		Snippet:     "This is a test post",
-		HTMLPath:    "/posts/001.html",
+		HTMLPath:    "001.html",
+		HTMLContent: []byte("<html>test content</html>"),
 		UpdatedAt:   now,
 		PublishedAt: now,
 		CreatedAt:   now,
 	}
 
-	err := repo.UpsertPost(ctx, post)
+	err := repo.SavePost(ctx, post)
 	if err != nil {
 		t.Fatalf("UpsertPost failed: %v", err)
 	}
@@ -82,17 +83,18 @@ func TestPostRepository_UpsertPost_Update(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	post := &domain.Post{
-		ID:        "001",
-		Title:     "Original Title",
-		Snippet:   "Original snippet",
-		HTMLPath:  "/posts/001.html",
-		UpdatedAt: now,
-		CreatedAt: now,
+		ID:          "001",
+		Title:       "Original Title",
+		Snippet:     "Original snippet",
+		HTMLPath:    "001.html",
+		HTMLContent: []byte("<html>test content</html>"),
+		UpdatedAt:   now,
+		CreatedAt:   now,
 	}
 
-	err := repo.UpsertPost(ctx, post)
+	err := repo.SavePost(ctx, post)
 	if err != nil {
-		t.Fatalf("UpsertPost (insert) failed: %v", err)
+		t.Fatalf("SavePost (insert) failed: %v", err)
 	}
 
 	laterTime := now.Add(1 * time.Hour)
@@ -100,9 +102,9 @@ func TestPostRepository_UpsertPost_Update(t *testing.T) {
 	post.Snippet = "Updated snippet"
 	post.UpdatedAt = laterTime
 
-	err = repo.UpsertPost(ctx, post)
+	err = repo.SavePost(ctx, post)
 	if err != nil {
-		t.Fatalf("UpsertPost (update) failed: %v", err)
+		t.Fatalf("SavePost (update) failed: %v", err)
 	}
 
 	retrieved, err := repo.GetPost(ctx, "001")
@@ -124,15 +126,15 @@ func TestPostRepository_UpsertPost_Update(t *testing.T) {
 	}
 }
 
-func TestPostRepository_UpsertPost_NilPost(t *testing.T) {
+func TestPostRepository_SavePost_NilPost(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	repo := NewPostRepository(db)
 	ctx := context.Background()
 
-	err := repo.UpsertPost(ctx, nil)
+	err := repo.SavePost(ctx, nil)
 	if err == nil {
-		t.Error("UpsertPost should return error for nil post")
+		t.Error("SavePost should return error for nil post")
 	}
 }
 
@@ -168,17 +170,18 @@ func TestPostRepository_PublishAndUnpublish(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	post := &domain.Post{
-		ID:        "001",
-		Title:     "To Be Published",
-		Snippet:   "A post to test publishing",
-		HTMLPath:  "/posts/001.html",
-		UpdatedAt: now,
-		CreatedAt: now,
+		ID:          "001",
+		Title:       "To Be Published",
+		Snippet:     "A post to test publishing",
+		HTMLPath:    "001.html",
+		HTMLContent: []byte("<html>test</html>"),
+		UpdatedAt:   now,
+		CreatedAt:   now,
 	}
 
-	err := repo.UpsertPost(ctx, post)
+	err := repo.SavePost(ctx, post)
 	if err != nil {
-		t.Fatalf("UpsertPost failed: %v", err)
+		t.Fatalf("SavePost failed: %v", err)
 	}
 
 	retrieved, err := repo.GetPost(ctx, "001")
@@ -237,11 +240,12 @@ func TestPostRepository_ListPublishedPosts(t *testing.T) {
 	}
 
 	for _, p := range posts {
-		p.HTMLPath = "/path"
+		p.HTMLPath = "test.html"
 		p.Snippet = "snippet"
-		err := repo.UpsertPost(ctx, p)
+		p.HTMLContent = []byte("<html>test</html>")
+		err := repo.SavePost(ctx, p)
 		if err != nil {
-			t.Fatalf("UpsertPost failed: %v", err)
+			t.Fatalf("SavePost failed: %v", err)
 		}
 	}
 
@@ -276,13 +280,14 @@ func TestPostRepository_ListPublishedPosts_Pagination(t *testing.T) {
 			ID:          fmt.Sprintf("%03d", i),
 			Title:       fmt.Sprintf("Post %d", i),
 			Snippet:     "snippet",
-			HTMLPath:    "/path",
+			HTMLPath:    "test.html",
+			HTMLContent: []byte("<html>test</html>"),
 			PublishedAt: baseTime.Add(time.Duration(i) * time.Hour),
 			CreatedAt:   baseTime,
 		}
-		err := repo.UpsertPost(ctx, post)
+		err := repo.SavePost(ctx, post)
 		if err != nil {
-			t.Fatalf("UpsertPost failed: %v", err)
+			t.Fatalf("SavePost failed: %v", err)
 		}
 	}
 
@@ -356,13 +361,14 @@ func TestPostRepository_ListPublishedPosts_DefaultLimit(t *testing.T) {
 			ID:          fmt.Sprintf("%03d", i),
 			Title:       fmt.Sprintf("Post %d", i),
 			Snippet:     "snippet",
-			HTMLPath:    "/path",
+			HTMLPath:    "test.html",
+			HTMLContent: []byte("<html>test</html>"),
 			PublishedAt: baseTime.Add(time.Duration(i) * time.Hour),
 			CreatedAt:   baseTime,
 		}
-		err := repo.UpsertPost(ctx, post)
+		err := repo.SavePost(ctx, post)
 		if err != nil {
-			t.Fatalf("UpsertPost failed: %v", err)
+			t.Fatalf("SavePost failed: %v", err)
 		}
 	}
 
@@ -385,13 +391,14 @@ func TestPostRepository_ListPublishedPosts_NegativeOffset(t *testing.T) {
 		ID:          "001",
 		Title:       "Test Post",
 		Snippet:     "Test",
-		HTMLPath:    "/posts/001.html",
+		HTMLPath:    "001.html",
+		HTMLContent: []byte("<html>test</html>"),
 		PublishedAt: time.Now(),
 		CreatedAt:   time.Now(),
 	}
-	err := repo.UpsertPost(ctx, post)
+	err := repo.SavePost(ctx, post)
 	if err != nil {
-		t.Fatalf("UpsertPost failed: %v", err)
+		t.Fatalf("SavePost failed: %v", err)
 	}
 
 	posts, err := repo.ListPublishedPosts(ctx, 10, -5)
@@ -420,10 +427,10 @@ func TestPostRepository_GetLatestUpdatedTime(t *testing.T) {
 
 	// Test with one post
 	time1 := time.Now().UTC().Truncate(time.Second)
-	post1 := &domain.Post{ID: "001", UpdatedAt: time1, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "/path"}
-	err = repo.UpsertPost(ctx, post1)
+	post1 := &domain.Post{ID: "001", UpdatedAt: time1, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "test.html", HTMLContent: []byte("<html>test</html>")}
+	err = repo.SavePost(ctx, post1)
 	if err != nil {
-		t.Fatalf("UpsertPost failed: %v", err)
+		t.Fatalf("SavePost failed: %v", err)
 	}
 
 	latestTime, err = repo.GetLatestUpdatedTime(ctx)
@@ -439,14 +446,14 @@ func TestPostRepository_GetLatestUpdatedTime(t *testing.T) {
 	time3 := time1.Add(-1 * time.Hour)
 
 	posts := []*domain.Post{
-		{ID: "002", UpdatedAt: time2, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "/path"}, // most recent
-		{ID: "003", UpdatedAt: time3, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "/path"},
+		{ID: "002", UpdatedAt: time2, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "test.html", HTMLContent: []byte("<html>test</html>")}, // most recent
+		{ID: "003", UpdatedAt: time3, CreatedAt: time1, Title: "title", Snippet: "snippet", HTMLPath: "test.html", HTMLContent: []byte("<html>test</html>")},
 	}
 
 	for _, p := range posts {
-		err := repo.UpsertPost(ctx, p)
+		err := repo.SavePost(ctx, p)
 		if err != nil {
-			t.Fatalf("UpsertPost failed: %v", err)
+			t.Fatalf("SavePost failed: %v", err)
 		}
 	}
 

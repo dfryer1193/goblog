@@ -34,6 +34,21 @@ var migrations = []migration{
 			WHERE published_at IS NOT NULL;
 		`,
 	},
+	{
+		version: 2,
+		name:    "create_images_table",
+		up: `
+			CREATE TABLE IF NOT EXISTS images (
+				path TEXT PRIMARY KEY,
+				hash TEXT NOT NULL,
+				updated_at TIMESTAMP,
+				created_at TIMESTAMP NOT NULL
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_images_updated_at 
+			ON images(updated_at DESC);
+		`,
+	},
 }
 
 // runMigrations executes all pending migrations
