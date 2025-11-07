@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 
 	"github.com/dfryer1193/goblog/blog/domain"
@@ -77,7 +76,7 @@ func (r *SQLiteImageRepository) SaveImage(ctx context.Context, img *domain.Image
 			return fmt.Errorf("failed to create image directory: %w", err)
 		}
 
-		filename := path.Base(img.Path)
+		filename := filepath.Base(img.Path)
 		localPath := filepath.Join(imageDir, filename)
 
 		if err := os.WriteFile(localPath, img.Content, 0644); err != nil {
