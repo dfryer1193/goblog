@@ -36,7 +36,7 @@ type SQLiteDB struct {
 }
 
 // NewSQLiteDB creates a new SQLite database instance
-func NewSQLiteDB(cfg *SQLiteConfig) db.Database {
+func NewSQLiteDB(cfg *SQLiteConfig) *SQLiteDB {
 	return &SQLiteDB{
 		dbPath: cfg.Path,
 	}
