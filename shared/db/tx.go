@@ -23,9 +23,9 @@ func GetTx(ctx context.Context) (*sql.Tx, bool) {
 // GetExecutor returns either a transaction from context or the base db connection
 // This allows repositories to execute queries within a transaction if one exists
 func GetExecutor(ctx context.Context, db *sql.DB) interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 } {
 	if tx, ok := GetTx(ctx); ok {
 		return tx
@@ -60,4 +60,3 @@ func RunInTransaction(ctx context.Context, db *sql.DB, fn func(ctx context.Conte
 
 	return nil
 }
-
