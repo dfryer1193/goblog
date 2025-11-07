@@ -34,9 +34,17 @@ func GetExecutor(ctx context.Context, db *sql.DB) interface {
 }
 
 // RunInTransaction executes a function within a database transaction
-// If the function returns an error, the transaction is rolled back
-// Otherwise, the transaction is committed
+// If a transaction already exists in the context, it reuses that transaction
+// and does not commit or rollback (delegating that to the outer transaction)
+// If no transaction exists, it creates one, and commits or rolls back based on the result
 func RunInTransaction(ctx context.Context, db *sql.DB, fn func(ctx context.Context) error) error {
+	// Check if we're already in a transaction
+	if _, ok := GetTx(ctx); ok {
+		// Reuse existing transaction - no commit/rollback
+		return fn(ctx)
+	}
+
+	// Start a new transaction
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
