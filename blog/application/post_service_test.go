@@ -192,16 +192,15 @@ func TestCalculateHash(t *testing.T) {
 		{
 			name:     "Binary data",
 			content:  []byte{0x00, 0xFF, 0x42},
-			expected: "b8e806f779e3b8f7e0dc8c3f4b0f3d5e4ec6e3a2e8c3b9e8f6c7e6d6f5e4d3c2",
+			expected: "f803bec586282caafe409609aae90eb09f6d4cddb6e04431ddf76d22e7dcacd6",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := calculateHash(tt.content)
-			// Just verify it returns a valid hex string of the right length
-			if len(result) != 64 {
-				t.Errorf("calculateHash(%q) returned hash of length %d, want 64", tt.name, len(result))
+			if result != tt.expected {
+				t.Errorf("calculateHash(%q) = %q, want %q", tt.content, result, tt.expected)
 			}
 			// Verify it's deterministic
 			result2 := calculateHash(tt.content)
