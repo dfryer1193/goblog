@@ -70,16 +70,9 @@ func (s *PostService) SyncRepositoryChanges() error {
 		return fmt.Errorf("failed to retrieve branches: %w", err)
 	}
 
-	var errs []error
-	// don't worry about rate limits for the moment; we shouldn't be making calls in enough volume for it to be a problem.
-	for _, branch := range branches {
-		if err := s.processBranches(lastUpdatedAt, []*github.Branch{branch}); err != nil {
-			errs = append(errs, fmt.Errorf("branch %s: %w", *branch.Name, err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to sync %d branches: %v", len(errs), errs)
+	err = s.processBranches(lastUpdatedAt, branches)
+	if err != nil {
+		return fmt.Errorf("failed to process branches: %w", err)
 	}
 
 	return nil
