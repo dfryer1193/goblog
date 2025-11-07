@@ -22,6 +22,18 @@ type SQLiteImageRepository struct {
 
 // NewImageRepository creates a new SQLiteImageRepository from a standard sql.DB
 func NewImageRepository(sqlDB *sql.DB) *SQLiteImageRepository {
+	info, err := os.Stat(imageDir)
+	if os.IsNotExist(err) {
+		err := os.MkdirAll(imageDir, 0755)
+		if err != nil {
+			panic(fmt.Sprintf("failed to create image directory: %v", err))
+		}
+	} else if err != nil {
+		panic(fmt.Sprintf("failed to stat image directory: %v", err))
+	} else if !info.IsDir() {
+		panic(fmt.Sprintf("image path exists but is not a directory: %s", imageDir))
+	}
+
 	return &SQLiteImageRepository{
 		db: sqlDB,
 	}
@@ -69,11 +81,6 @@ func (r *SQLiteImageRepository) SaveImage(ctx context.Context, img *domain.Image
 
 		if err != nil {
 			return fmt.Errorf("failed to upsert image record: %w", err)
-		}
-
-		// Then write to filesystem - if this fails, transaction rolls back
-		if err := os.MkdirAll(imageDir, 0755); err != nil {
-			return fmt.Errorf("failed to create image directory: %w", err)
 		}
 
 		filename := filepath.Base(img.Path)
