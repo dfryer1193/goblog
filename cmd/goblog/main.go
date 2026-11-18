@@ -56,3 +56,5 @@ func port() string {
 	}
 	return defaultPort
 }
+
+// CI check for #10: touch so goblog is affected. Throwaway.
