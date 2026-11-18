@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"strconv"
@@ -152,6 +151,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 		serverError(w, "file isn't seekable")
 		return
 	}
+	w.Header().Set("Content-Type", contentType(name))
 	http.ServeContent(w, r, info.Name(), time.Time{}, content)
 }
 
@@ -221,11 +221,7 @@ func serveWhole(w http.ResponseWriter, r *http.Request, name string, f fs.File, 
 // gzipped), with the given status.
 func writeWhole(w http.ResponseWriter, r *http.Request, name string, f io.Reader, size int64, status int) {
 	h := w.Header()
-	contentType := mime.TypeByExtension(path.Ext(name))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	h.Set("Content-Type", contentType)
+	h.Set("Content-Type", contentType(name))
 	h.Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {

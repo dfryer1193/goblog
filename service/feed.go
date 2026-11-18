@@ -10,8 +10,8 @@ import (
 	"github.com/dfryer1193/goblog/models"
 )
 
-// feedFile is the Atom feed's output file, at /feed.xml.
-const feedFile = "feed.xml"
+// FeedFile is the Atom feed's output file, at /feed.xml.
+const FeedFile = "feed.xml"
 
 // atomNS is the Atom 1.0 (RFC 4287) XML namespace.
 const atomNS = "http://www.w3.org/2005/Atom"
@@ -75,7 +75,7 @@ func renderFeed(b *siteBuild) error {
 		// no named author.
 		Author: atomPerson{Name: cmp.Or(b.settings.Author, b.settings.Title)},
 		Links: []atomLink{
-			{Rel: "self", Type: "application/atom+xml", Href: b.absURL("/" + feedFile)},
+			{Rel: "self", Type: "application/atom+xml", Href: b.absURL(feedPath)},
 			{Rel: "alternate", Type: "text/html", Href: b.absURL("/")},
 		},
 		// With no Posts, the feed last changed when the site was built.
@@ -105,7 +105,7 @@ func renderFeed(b *siteBuild) error {
 		f.Entries = append(f.Entries, e)
 	}
 
-	return b.out.xml(feedFile, f)
+	return b.out.xml(FeedFile, f)
 }
 
 // hasFeed reports whether a site with settings has a feed and a sitemap.

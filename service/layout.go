@@ -12,7 +12,7 @@ import (
 )
 
 // feedPath is the site path of the Atom feed.
-const feedPath = "/feed.xml"
+const feedPath = "/" + FeedFile
 
 // postsWindow is the name of the navigation entry (the status bar window)
 // that the index and the Post pages belong to. It's also the index's pane
