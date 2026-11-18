@@ -92,6 +92,70 @@ func TestIndexListsPostsByPublishDateNewestFirstWithTiesByFilename(t *testing.T)
 	}
 }
 
+func assertNoFile(t *testing.T, site *models.Site, name string) {
+	t.Helper()
+	if _, ok := site.Files[name]; ok {
+		t.Errorf("output has %s, but shouldn't", name)
+	}
+}
+
+func TestPostsWithNoOrAFuturePublishDateAreDrafts(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/today.md":    "---\ntitle: Today\ndate: 2026-03-10\n---\n",
+		"posts/tomorrow.md": "---\ntitle: Tomorrow\ndate: 2026-03-11\n---\n",
+		"posts/undated.md":  "---\ntitle: Undated\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	index := page(t, site, "index.html")
+	assertContains(t, "index", index, ">Today<")
+	for _, draft := range []string{"tomorrow", "undated"} {
+		if strings.Contains(index, "/posts/"+draft+"/") {
+			t.Errorf("index links to the Draft %s", draft)
+		}
+		assertNoFile(t, site, "posts/"+draft+"/index.html")
+	}
+}
+
+func TestPublishDateArrivesAtMidnightInTheBuildTimezone(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("loading timezone: %v", err)
+	}
+	repo := contentRepo(map[string]string{
+		"posts/ninth.md": "---\ntitle: Ninth\ndate: 2026-03-09\n---\n",
+		"posts/tenth.md": "---\ntitle: Tenth\ndate: 2026-03-10\n---\n",
+	})
+	// 2026-03-10 in UTC, but still 23:59 on 2026-03-09 in New York.
+	justBeforeMidnightInNewYork := time.Date(2026, time.March, 10, 3, 59, 0, 0, time.UTC)
+	midnightInNewYork := justBeforeMidnightInNewYork.Add(time.Minute)
+
+	tests := []struct {
+		name          string
+		at            time.Time
+		timezone      *time.Location
+		wantPublished bool
+	}{
+		{"UTC defaults on, already the tenth", justBeforeMidnightInNewYork, nil, true},
+		{"New York, still the ninth", justBeforeMidnightInNewYork, newYork, false},
+		{"New York, now the tenth", midnightInNewYork, newYork, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			site := build(t, repo, tt.at, service.BuildOptions{Timezone: tt.timezone})
+
+			assertNoProblems(t, site)
+			assertContains(t, "index", page(t, site, "index.html"), ">Ninth<")
+			_, published := site.Files["posts/tenth/index.html"]
+			if published != tt.wantPublished {
+				t.Errorf("posts/tenth published = %v, want %v", published, tt.wantPublished)
+			}
+		})
+	}
+}
+
 func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 	repo := contentRepo(map[string]string{
 		"posts/picluster.md": "---\ntitle: Building a Pi cluster\ndate: 2026-01-05\n---\n\n" +
