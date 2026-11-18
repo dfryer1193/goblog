@@ -128,6 +128,9 @@ func TestEveryBrokenReferenceInAPostIsReported(t *testing.T) {
 	site := build(t, repo, now, service.BuildOptions{})
 
 	assertSkippedFor(t, site, "posts/broken.md", `"./a.md"`, `"../images/b.png"`)
+	if problem := site.Problems[0].String(); strings.Contains(problem, "\n") {
+		t.Errorf("problem spans several lines: %q", problem)
+	}
 }
 
 func TestAbsoluteURLsAndFragmentsAreLeftAlone(t *testing.T) {

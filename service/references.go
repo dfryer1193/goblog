@@ -27,6 +27,18 @@ type referencing struct {
 	errs []error
 }
 
+// err returns the bad references, all on one line, or nil if there are none.
+func (r *referencing) err() error {
+	if len(r.errs) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(r.errs))
+	for i, err := range r.errs {
+		msgs[i] = err.Error()
+	}
+	return errors.New(strings.Join(msgs, "; "))
+}
+
 // newReferencing returns a parser.Context for parsing the Content Repository
 // file at from, and the state its references are resolved into.
 func newReferencing(from string) (parser.Context, *referencing) {

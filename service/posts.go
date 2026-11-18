@@ -95,8 +95,8 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 
 	pc, refs := newReferencing(name)
 	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
-	if len(refs.errs) > 0 {
-		return nil, errors.Join(refs.errs...)
+	if err = refs.err(); err != nil {
+		return nil, err
 	}
 	if post.Summary == "" {
 		post.Summary = firstParagraph(doc, body)
