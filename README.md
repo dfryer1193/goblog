@@ -5,9 +5,10 @@ repository, the Content Repository, and goblog publishes them with no manual
 publishing step.
 
 > **Status:** goblog is being rebuilt from scratch. Right now the server
-> clones the Content Repository once at startup and serves its Posts as plain,
-> unstyled HTML, and `goblog build` renders them the same way locally. The previous implementation is kept under
-> the `legacy` tag for reference.
+> clones the Content Repository once at startup and serves its Posts, Pages
+> and tags as plain, unstyled HTML, and `goblog build` renders them the same
+> way locally. The previous implementation is kept under the `legacy` tag for
+> reference.
 
 ## How it works
 
