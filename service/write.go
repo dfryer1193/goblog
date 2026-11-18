@@ -60,5 +60,5 @@ func checkEmpty(root *os.Root, dir string) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", dir, err)
 	}
-	return fmt.Errorf("%s is not empty; remove it or choose another output directory: %w", dir, fs.ErrExist)
+	return fmt.Errorf("%s is not empty; remove it or choose another output directory", dir)
 }
