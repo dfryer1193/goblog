@@ -1,51 +1,91 @@
 # goblog
 
-A blogging platform backend designed to consume Markdown articles and produce
-blog posts.
+A single-author blog server. You write Posts as Markdown in a separate git
+repository, the Content Repository, and goblog publishes them with no manual
+publishing step.
 
-Supports comments.
+> **Status:** goblog is being rebuilt from scratch. Right now the `goblog`
+> binary serves a placeholder page and its health probes, nothing more. The
+> previous implementation is kept under the `legacy` tag for reference.
 
-Does not support user login (yet)
+## How it works
 
-## Post Repo Setup
+goblog keeps a shallow clone of the Content Repository. Whenever that
+repository changes, it renders the **whole site** into static, pre-compressed
+files and switches over to the new output all at once. A change is signalled
+by a signed GitHub webhook or found by a poll every minute. A scheduled Post's
+Publish Date arriving also triggers a render. Between renders goblog only
+serves files: no JavaScript, and no database. A failed render leaves the
+previous site in place.
 
-Currently, the project expects a specific post repo structure:
+See [ADR-0001](docs/adr/0001-render-on-change-static-output.md) for why goblog
+renders on change instead of running as a static site generator in CI or as a
+database-backed server.
+
+The [glossary](GLOSSARY.md) defines the terms used here and in the code:
+Content Repository, Post, Page, Publish Date, Draft and Published Post.
+
+## The Content Repository
 
 ```text
-<blog_posts>/
-    |-posts/
-    |   |-001_first_post.md
-    |   |-002_second_post.md
-    |   |-003_third_post.md
-    |   |-...
-    |   `-nnn_Nth_post.md
-    `-images/ 
-        |-some_image.jpg
-        `-another_image.png
+<content-repository>/
+├── posts/       one Post per .md file, e.g. posts/picluster.md → /posts/picluster/
+├── pages/       one Page per .md file, e.g. pages/about.md → /about/
+├── images/      images referenced from Posts by relative path (subfolders allowed)
+├── templates/   ignored by goblog, e.g. a new-post template
+└── site.yaml    site settings: title, author, description, navigation, timezone
 ```
 
-The webhook handler will generate html files from the markdown files, prefixing
-any links with the preconfigured blog domain. (currently defaults to my
-personal blog at `https://blog.werewolves.fyi`)
+A Post's front matter needs a `title`. Its optional `date` (`YYYY-MM-DD`) is its
+Publish Date. A Post without one, or with one still in the future, is a Draft
+and isn't published. Only the default branch is published.
 
-Images will exist at `http://<domain>/images/`. The document AST will handle
-pointing relative links at the right place, including handling `./` and `../`
-without allowing http server path traversal. Given the strict project
-structure, the parsing logic assumes that every link node points to a post, and
-every image node points to an image.
+## Running goblog
 
-### Examples
+goblog ships as a single binary, `goblog`, and a container image of the same
+name built by CI. It ships no deployment manifests: bring your own. Everything
+specific to one blog lives in the Content Repository's `site.yaml` and in the
+deployment's environment, so you can run your own blog from a fork without
+code changes.
 
-This markdown
+The server listens on `$PORT` (default `8080`) and answers these probes:
 
-```markdown
-This text contains a [relative link](./README.md).
-It also contains ![an image](../images/test_image.png)
-```
+| Path        | Probe     |
+| ----------- | --------- |
+| `/livez`    | liveness  |
+| `/readyz`   | readiness |
+| `/startupz` | startup   |
 
-...generates this html (css class information is omitted for brevity):
+The rest of the runtime configuration (the Content Repository URL, branch,
+deploy key, webhook secret and poll interval) is still to be built.
 
-```html
-This text contains a <a href="https://blog.werewolves.fyi/README">relative link</a>.
-It also contains <img src="https://blog.werewolves.fyi/test_image.png" alt="an image"/>
-```
+## Development
+
+The repository is scaffolded with
+[Ivaldi](https://github.com/worldtree-industries/ivaldi). You need Go 1.27 and
+[golangci-lint v2](https://golangci-lint.run/welcome/install/).
+
+| Command            | What it does                                  |
+| ------------------ | --------------------------------------------- |
+| `make lint`        | Run golangci-lint                             |
+| `make test`        | Run the tests                                 |
+| `make build`       | Build everything, and each binary into `bin/` |
+| `make run-goblog`  | Run the server                                |
+| `make install`     | `go install` every binary                     |
+| `make setup-hooks` | Turn on the pre-commit hook in a fresh clone  |
+
+Run `make setup-hooks` once after cloning. The pre-commit hook runs
+`make lint test`.
+
+The code follows Ivaldi's layers, and lint enforces which may import which:
+
+| Layer      | Holds                                                  | May import          |
+| ---------- | ------------------------------------------------------ | ------------------- |
+| `api`      | HTTP handlers: static file serving, the webhook        | `service`, `models` |
+| `service`  | the site build, and syncing and switching over output  | `data`, `models`    |
+| `data`     | Content Repository access: clone and fetch             | `models`            |
+| `models`   | Post, Page and site settings types, the rendered site  | nothing             |
+
+## Licence
+
+See [LICENSE](LICENSE).

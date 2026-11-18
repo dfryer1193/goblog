@@ -1,0 +1,24 @@
+# Managed by Ivaldi. This file is the same in every Project and is kept
+# current for you, so don't edit it. CI logic lives in the shared workflow.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    uses: worldtree-industries/workflows/.github/workflows/go.yml@e27aff84ed75bc3995068bce81b197c7dd6eafff # v1.0.0
+    secrets:
+      HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+      HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
