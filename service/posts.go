@@ -65,6 +65,13 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 	return posts, problems, nil
 }
 
+// fileStem is the name of the Post or Page file at name without its folder
+// and extension: its slug or Page name, e.g. "picluster" for
+// posts/picluster.md.
+func fileStem(name string) string {
+	return strings.TrimSuffix(path.Base(name), markdownExt)
+}
+
 // newMarkdown is the Markdown converter for Posts and Pages in content: GFM,
 // with references resolved and code blocks highlighted.
 func newMarkdown(content fs.FS) goldmark.Markdown {
@@ -96,7 +103,7 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	}
 	post := &models.Post{
 		Path:    name,
-		Slug:    strings.TrimSuffix(path.Base(name), markdownExt),
+		Slug:    fileStem(name),
 		Title:   title,
 		Tags:    tags,
 		Summary: meta.Summary,

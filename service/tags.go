@@ -12,17 +12,20 @@ import (
 // also the section's title.
 const tagsSection = "tags"
 
+// tagsURL is the site path of the page listing every tag.
+const tagsURL = "/" + tagsSection + "/"
+
 // renderTags renders /tags/, listing every tag of the listed Posts with its
 // Post count, and /tags/<tag>/ for each tag, listing its Posts like the
 // index. Only the listed Posts count, so Drafts don't unless the build
 // includes them (see Build, which collects b.tags).
 func renderTags(b *siteBuild) error {
 	data := pageData{Title: tagsSection, Label: tagsSection, WindowTitle: "all", Tags: b.tags}
-	if err := b.out.page("tags/index.html", "tags", data); err != nil {
+	if err := b.out.page(indexFileFor(tagsURL), "tags", data); err != nil {
 		return err
 	}
 	for _, tag := range b.tags {
-		name := "tags/" + models.TagSlug(tag.Name) + "/index.html"
+		name := indexFileFor(tag.URL())
 		data = pageData{Title: "#" + tag.Name, Label: "#" + tag.Name, WindowTitle: tag.Name, Tag: tag, Posts: tag.Posts}
 		if err := b.out.page(name, "tag", data); err != nil {
 			return fmt.Errorf("rendering tag %s: %w", tag.Name, err)

@@ -127,7 +127,7 @@ func renderIndex(b *siteBuild) error {
 // renderPostPages renders one page per listed Post, at /posts/<slug>/.
 func renderPostPages(b *siteBuild) error {
 	for _, p := range b.posts {
-		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{
+		if err := b.out.page(indexFileFor(p.URL()), "post", pageData{
 			Title: p.Title, Label: p.Slug + markdownExt, WindowTitle: p.Slug + markdownExt, Post: p,
 		}); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)

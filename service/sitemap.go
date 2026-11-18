@@ -38,7 +38,7 @@ func renderSitemap(b *siteBuild) error {
 	for _, p := range b.pages {
 		set.URLs = append(set.URLs, sitemapURL{Loc: b.absURL(p.URL())})
 	}
-	set.URLs = append(set.URLs, sitemapURL{Loc: b.absURL("/" + tagsSection + "/")})
+	set.URLs = append(set.URLs, sitemapURL{Loc: b.absURL(tagsURL)})
 	for _, tag := range collectTags(posts) {
 		set.URLs = append(set.URLs, sitemapURL{Loc: b.absURL(tag.URL())})
 	}

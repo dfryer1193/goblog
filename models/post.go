@@ -73,7 +73,13 @@ type Post struct {
 
 // URL is the Post's site path, e.g. /posts/picluster/.
 func (p *Post) URL() string {
-	return "/posts/" + p.Slug + "/"
+	return PostURL(p.Slug)
+}
+
+// PostURL is the site path of the Post with the given slug, e.g.
+// /posts/picluster/. It's the one place Post URLs are made.
+func PostURL(slug string) string {
+	return "/posts/" + slug + "/"
 }
 
 // Problem is something wrong with one file in the Content Repository that
@@ -105,5 +111,11 @@ type Page struct {
 
 // URL is the Page's site path, e.g. /about/.
 func (p *Page) URL() string {
-	return "/" + p.Name + "/"
+	return PageURL(p.Name)
+}
+
+// PageURL is the site path of the Page with the given name, e.g. /about/.
+// It's the one place Page URLs are made.
+func PageURL(name string) string {
+	return "/" + name + "/"
 }

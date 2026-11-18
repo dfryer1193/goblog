@@ -51,7 +51,7 @@ func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page, fe
 	for _, p := range posts {
 		postsFolder.children = append(postsFolder.children, treeLine{Name: p.Slug + markdownExt, URL: p.URL()})
 	}
-	tagsFolder := treeFolder{entry: treeLine{Name: tagsSection + "/", URL: "/" + tagsSection + "/"}}
+	tagsFolder := treeFolder{entry: treeLine{Name: tagsSection + "/", URL: tagsURL}}
 	for _, tag := range tags {
 		tagsFolder.children = append(tagsFolder.children, treeLine{Name: tag.Name, URL: tag.URL(), Class: "tag"})
 	}
@@ -105,6 +105,13 @@ func treeFor(tree []treeLine, sitePath string) []treeLine {
 		lines[i] = line
 	}
 	return lines
+}
+
+// indexFileFor is the output file that serves the site path sitePath, which
+// ends in "/": "index.html" for "/", "x/index.html" for "/x/". It's the
+// inverse of sitePath for such paths.
+func indexFileFor(sitePath string) string {
+	return strings.TrimPrefix(sitePath, "/") + "index.html"
 }
 
 // sitePath is the site path that serves the output file name: "/" for

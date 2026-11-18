@@ -13,6 +13,8 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
+
+	"github.com/dfryer1193/goblog/models"
 )
 
 // referencesKey holds a *referencing in a goldmark parser.Context: the
@@ -115,12 +117,9 @@ func (x *references) resolve(from, dest string, image bool) (string, error) {
 	case strings.HasPrefix(target, imagesDir+"/"):
 		site = &url.URL{Path: "/" + target}
 	case !image && path.Dir(target) == pagesDir && path.Ext(target) == markdownExt:
-		site = &url.URL{Path: "/" + strings.TrimSuffix(path.Base(target), markdownExt) + "/", Fragment: u.Fragment}
+		site = &url.URL{Path: models.PageURL(fileStem(target)), Fragment: u.Fragment}
 	case !image && path.Dir(target) == postsDir && path.Ext(target) == markdownExt:
-		site = &url.URL{
-			Path:     "/posts/" + strings.TrimSuffix(path.Base(target), markdownExt) + "/",
-			Fragment: u.Fragment,
-		}
+		site = &url.URL{Path: models.PostURL(fileStem(target)), Fragment: u.Fragment}
 	default:
 		return "", fmt.Errorf("points at %s, which isn't on the site", target)
 	}

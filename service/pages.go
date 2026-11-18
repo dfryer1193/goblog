@@ -62,7 +62,7 @@ func readPages(content fs.FS) ([]*models.Page, []models.Problem, error) {
 func renderPages(b *siteBuild) error {
 	for _, p := range b.pages {
 		data := pageData{Title: p.Title, Label: p.Name + markdownExt, WindowTitle: p.Name + markdownExt, Page: p}
-		if err := b.out.page(p.Name+"/index.html", "page", data); err != nil {
+		if err := b.out.page(indexFileFor(p.URL()), "page", data); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}
 	}
@@ -71,7 +71,7 @@ func renderPages(b *siteBuild) error {
 
 // readPage reads, validates and renders the Page at name.
 func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, error) {
-	pageName := strings.TrimSuffix(path.Base(name), markdownExt)
+	pageName := fileStem(name)
 	if err := checkPageName(pageName); err != nil {
 		return nil, err
 	}
