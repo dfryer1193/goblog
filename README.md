@@ -4,11 +4,13 @@ A single-author blog server. You write Posts as Markdown in a separate git
 repository, the Content Repository, and goblog publishes them with no manual
 publishing step.
 
-> **Status:** goblog is being rebuilt from scratch. Right now the server
-> clones the Content Repository, keeps it in sync through the webhook and
-> polling, and serves its Posts, Pages and tags as plain, unstyled HTML, and
-> `goblog build` renders them the same way locally. The previous
-> implementation is kept under the `legacy` tag for reference.
+> **Status:** goblog is being rebuilt from scratch. The server clones the
+> Content Repository, keeps it in sync through the webhook and polling, and
+> serves the whole site (Posts, Pages, tags, the Atom feed and the sitemap) in
+> its tmux-styled design, pre-compressed and with no JavaScript.
+> `goblog build` renders the same site locally. Deployment docs are still to
+> come. The previous implementation is kept under the `legacy` tag for
+> reference.
 
 ## How it works
 
@@ -45,8 +47,9 @@ and isn't published. Only the default branch is published.
 Relative links and images are rewritten to the site's URLs: `./picluster.md`
 becomes `/posts/picluster/`, `../pages/about.md` becomes `/about/` and
 `../images/rack.png` becomes `/images/rack.png`. A relative link that escapes
-the Content Repository, or points at a missing file or one that isn't on the
-site, is an error, and the Post or Page is skipped. A link to a Post that
+the Content Repository, or points at a missing file or at one the site never
+publishes (such as `../README.md`), is an error, and the Post or Page is
+skipped. A link to a Post that
 isn't published (a Draft, or a Post or Page skipped for an error) is a
 warning instead: it's shown as plain text until its target publishes.
 
@@ -88,14 +91,18 @@ The server is configured from the environment:
 | `GOBLOG_CONTENT_URL`     | The Content Repository's URL: SSH (`git@github.com:you/blog-content.git`) or HTTPS  | required                                   |
 | `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
 | `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
-| `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys             | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
+| `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
 | `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
-The container image has no `known_hosts` file, so set `GOBLOG_SSH_KNOWN_HOSTS`
-when you use a deploy key.
+`GOBLOG_SSH_KNOWN_HOSTS` is required whenever you use a deploy key: the
+container image has no `known_hosts` file, so without it goblog can't check
+the SSH host's key and every clone and fetch fails. (Outside the image, goblog
+falls back to `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts`.) Point
+`GOBLOG_WORK_DIR` at ephemeral storage, such as an `emptyDir`: goblog keeps
+the clone and the rendered site there and rebuilds both at startup.
 
 At startup goblog makes a shallow, single-branch clone of the Content
 Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
