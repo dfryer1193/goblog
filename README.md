@@ -4,9 +4,10 @@ A single-author blog server. You write Posts as Markdown in a separate git
 repository, the Content Repository, and goblog publishes them with no manual
 publishing step.
 
-> **Status:** goblog is being rebuilt from scratch. Right now the `goblog`
-> binary serves a placeholder page and its health probes, nothing more. The
-> previous implementation is kept under the `legacy` tag for reference.
+> **Status:** goblog is being rebuilt from scratch. Right now the server
+> serves a placeholder page and its health probes, and `goblog build` renders
+> Posts into plain, unstyled HTML. The previous implementation is kept under
+> the `legacy` tag for reference.
 
 ## How it works
 
@@ -55,6 +56,18 @@ The server listens on `$PORT` (default `8080`) and answers these probes:
 | `/livez`    | liveness  |
 | `/readyz`   | readiness |
 | `/startupz` | startup   |
+
+To render the site once from a local checkout of the Content Repository, for
+previewing, run:
+
+```sh
+goblog build -content path/to/content-repository -out public [-drafts]
+```
+
+The output directory must not exist yet, or be empty. `-drafts` also renders
+Drafts, marked as such. Posts that can't be rendered, such as one with no
+`title`, are reported and skipped. The rest of the site is still written, but
+the command then exits with status 1.
 
 The rest of the runtime configuration (the Content Repository URL, branch,
 deploy key, webhook secret and poll interval) is still to be built.
