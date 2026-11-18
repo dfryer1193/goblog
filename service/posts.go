@@ -65,9 +65,10 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 	return posts, problems, nil
 }
 
-// newMarkdown is the Markdown converter for Posts and Pages in content.
+// newMarkdown is the Markdown converter for Posts and Pages in content: GFM,
+// with references resolved and code blocks highlighted.
 func newMarkdown(content fs.FS) goldmark.Markdown {
-	return goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}))
+	return goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}, highlightCode()))
 }
 
 // readPost reads, validates and renders the Post at name.

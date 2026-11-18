@@ -96,6 +96,10 @@ func makeAssets() (*assets, error) {
 	if err = tmpl.Execute(&css, nil); err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", stylesheetSource, err)
 	}
+	css.WriteString("\n/* Highlighted code. */\n")
+	if err = writeCodeCSS(&css); err != nil {
+		return nil, err
+	}
 	a.Stylesheet = a.add(path.Join(assetsSection, path.Base(stylesheetSource)), []byte(css.String()))
 	return a, nil
 }
