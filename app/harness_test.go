@@ -31,6 +31,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/dfryer1193/goblog/app"
+	"github.com/dfryer1193/goblog/service"
 )
 
 // defaultBranch is the test Content Repository's default branch. It isn't
@@ -153,6 +154,13 @@ func (c *testClock) Now() time.Time {
 	return c.now
 }
 
+// set moves the clock to at.
+func (c *testClock) set(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = at
+}
+
 // goblog is a running goblog under test.
 type goblog struct {
 	app   *app.App
@@ -209,6 +217,19 @@ func (g *goblog) syncFails(t *testing.T) {
 	t.Helper()
 	if err := g.app.Sync(t.Context()); err == nil {
 		t.Fatal("sync succeeded, want it to fail")
+	}
+}
+
+// poll runs one poll now and fails the test if it fails or does something
+// other than want.
+func (g *goblog) poll(t *testing.T, want service.PollResult) {
+	t.Helper()
+	got, err := g.app.Poll(t.Context())
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if got != want {
+		t.Fatalf("poll = %v, want %v", got, want)
 	}
 }
 

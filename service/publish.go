@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dfryer1193/goblog/data"
+	"github.com/dfryer1193/goblog/models"
 )
 
 // outputPrefix starts the name of every output directory under the
@@ -44,6 +46,39 @@ type Publisher struct {
 	current atomic.Pointer[render]
 	// cleaned records whether stale output from an earlier run is gone.
 	cleaned bool
+	// checkout is the clone's checkout as of the last successful update,
+	// and fetched whether there has been one.
+	checkout data.Checkout
+	fetched  bool
+	// retriedOn is the last day a Poll re-rendered for, so that a re-render
+	// that fails isn't retried until the next day or commit.
+	retriedOn models.Date
+}
+
+// PollResult says what a Poll did.
+type PollResult int
+
+const (
+	// PollUnchanged means there was nothing to do: no fetch and no render.
+	PollUnchanged PollResult = iota
+	// PollSynced means the Poll fetched and rendered, as Sync does.
+	PollSynced
+	// PollRerendered means the date rolled over since the last render, so
+	// the Poll rendered the same commit again, without a fetch, to publish
+	// any Posts scheduled for the new day.
+	PollRerendered
+)
+
+func (r PollResult) String() string {
+	switch r {
+	case PollUnchanged:
+		return "unchanged"
+	case PollSynced:
+		return "synced"
+	case PollRerendered:
+		return "rerendered"
+	}
+	return fmt.Sprintf("PollResult(%d)", int(r))
 }
 
 // render is one rendered site on disk.
@@ -51,6 +86,10 @@ type render struct {
 	dir    string
 	files  fs.FS
 	commit string
+	// tz and day are the timezone the build decided "today" in, and that
+	// day.
+	tz  *time.Location
+	day models.Date
 }
 
 // NewPublisher returns a Publisher for cfg that serves nothing until its
@@ -71,7 +110,41 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 func (p *Publisher) Sync(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.sync(ctx)
+}
 
+// Poll is the cheap periodic check. It syncs if the Content Repository's
+// branch has a new commit, or if there's no site yet (so a failed first
+// sync is retried). Otherwise, if the date in the site's timezone has
+// changed since the last render, it renders the same commit again without
+// fetching, so scheduled Posts publish; that happens even if the remote
+// can't be reached. Otherwise it does nothing. If anything fails, the
+// current site stays in place. It runs one at a time with Sync.
+func (p *Publisher) Poll(ctx context.Context) (PollResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cur := p.current.Load()
+	if !p.fetched || cur == nil {
+		return PollSynced, p.sync(ctx)
+	}
+	head, headErr := p.cfg.Repository.RemoteHead(ctx)
+	if headErr == nil && head != p.checkout.Commit {
+		return PollSynced, p.sync(ctx)
+	}
+	if headErr != nil {
+		headErr = fmt.Errorf("checking the Content Repository for a new commit: %w", headErr)
+	}
+	today := models.DateOf(p.cfg.Now().In(cur.tz))
+	if today == cur.day || today == p.retriedOn {
+		return PollUnchanged, headErr
+	}
+	p.retriedOn = today
+	return PollRerendered, errors.Join(headErr, p.publish(p.checkout))
+}
+
+// sync is Sync with p.mu held.
+func (p *Publisher) sync(ctx context.Context) error {
 	if !p.cleaned {
 		if err := p.removeStaleOutput(); err != nil {
 			return err
@@ -82,6 +155,7 @@ func (p *Publisher) Sync(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("updating the Content Repository: %w", err)
 	}
+	p.checkout, p.fetched = checkout, true
 	return p.publish(checkout)
 }
 
@@ -114,7 +188,9 @@ func (p *Publisher) publish(checkout data.Checkout) error {
 		return fmt.Errorf("writing commit %s: %w", checkout.Commit, err)
 	}
 
-	prev := p.current.Swap(&render{dir: dir, files: os.DirFS(dir), commit: checkout.Commit})
+	prev := p.current.Swap(&render{
+		dir: dir, files: os.DirFS(dir), commit: checkout.Commit, tz: site.Timezone, day: site.Today,
+	})
 	p.cfg.Logger.Info("Switched to a new render", "commit", checkout.Commit, "problems", len(site.Problems))
 	if prev != nil {
 		if err = os.RemoveAll(prev.dir); err != nil {

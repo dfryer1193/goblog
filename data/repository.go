@@ -84,6 +84,29 @@ func (r *Repository) Update(ctx context.Context) (Checkout, error) {
 	return Checkout{Commit: head.Hash().String(), Files: os.DirFS(r.cfg.Dir)}, nil
 }
 
+// RemoteHead is the full hash of the latest commit on the remote's branch,
+// found without fetching (like git ls-remote). It needs a clone, so call
+// Update first.
+func (r *Repository) RemoteHead(ctx context.Context) (string, error) {
+	if r.repo == nil {
+		return "", errors.New("the Content Repository hasn't been cloned yet")
+	}
+	remote, err := r.repo.Remote(remoteName)
+	if err != nil {
+		return "", fmt.Errorf("reading the clone's remote: %w", err)
+	}
+	refs, err := remote.ListContext(ctx, &git.ListOptions{Auth: r.cfg.Auth})
+	if err != nil {
+		return "", fmt.Errorf("listing %s: %w", r.cfg.URL, err)
+	}
+	for _, ref := range refs {
+		if ref.Name() == r.branch {
+			return ref.Hash().String(), nil
+		}
+	}
+	return "", fmt.Errorf("%s has no branch %s", r.cfg.URL, r.branch.Short())
+}
+
 // clone makes a fresh shallow, single-branch clone into the configured
 // directory.
 func (r *Repository) clone(ctx context.Context) error {

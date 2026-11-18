@@ -3,6 +3,9 @@ package app_test
 import (
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/dfryer1193/goblog/service"
 )
 
 // pushBody is a webhook push event's body. goblog doesn't read it, but the
@@ -78,4 +81,109 @@ func TestWebhookIsDisabledWithoutASecret(t *testing.T) {
 
 	assertStatus(t, "POST /webhook", resp, http.StatusNotFound)
 	assertStatus(t, "/posts/second/", g.get(t, "/posts/second/"), http.StatusNotFound)
+}
+
+func TestPollPublishesANewCommit(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	repo.commit(t, map[string]string{"posts/second.md": post("Second", "2026-03-05")})
+
+	g.poll(t, service.PollSynced)
+
+	assertStatus(t, "/posts/second/", g.get(t, "/posts/second/"), http.StatusOK)
+}
+
+func TestPollWithoutANewCommitDoesNothing(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+
+	g.poll(t, service.PollUnchanged)
+
+	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)
+}
+
+func TestPollRetriesAFailedFirstSync(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	g := startGoblog(t, repo, nil)
+	g.syncFails(t) // the Content Repository has no commits yet
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+
+	g.poll(t, service.PollSynced)
+
+	assertStatus(t, "/readyz", g.get(t, "/readyz"), http.StatusOK)
+	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)
+}
+
+func TestPollPublishesAScheduledPostWhenItsDayArrivesInTheSitesTimezone(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{
+		// Los Angeles is on UTC-7 from 2026-03-08.
+		"site.yaml":          "title: Test\ntimezone: America/Los_Angeles\n",
+		"posts/hello.md":     post("Hello", "2026-03-01"),
+		"posts/scheduled.md": post("Scheduled", "2026-03-11"),
+	})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	assertStatus(t, "/posts/scheduled/", g.get(t, "/posts/scheduled/"), http.StatusNotFound)
+
+	g.clock.set(time.Date(2026, time.March, 11, 6, 59, 0, 0, time.UTC)) // 23:59 on the 10th in Los Angeles
+	g.poll(t, service.PollUnchanged)
+	assertStatus(t, "/posts/scheduled/", g.get(t, "/posts/scheduled/"), http.StatusNotFound)
+
+	g.clock.set(time.Date(2026, time.March, 11, 7, 0, 0, 0, time.UTC)) // midnight on the 11th in Los Angeles
+	g.poll(t, service.PollRerendered)
+	assertStatus(t, "/posts/scheduled/", g.get(t, "/posts/scheduled/"), http.StatusOK)
+
+	g.poll(t, service.PollUnchanged)
+}
+
+func TestPollPublishesAScheduledPostEvenIfTheRemoteIsUnreachable(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/scheduled.md": post("Scheduled", "2026-03-11")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	repo.remove(t)
+
+	g.clock.set(time.Date(2026, time.March, 11, 0, 0, 0, 0, time.UTC))
+	result, err := g.app.Poll(t.Context())
+
+	if err == nil {
+		t.Error("poll with the remote gone succeeded, want the failed check reported")
+	}
+	if result != service.PollRerendered {
+		t.Errorf("poll = %v, want %v", result, service.PollRerendered)
+	}
+	assertStatus(t, "/posts/scheduled/", g.get(t, "/posts/scheduled/"), http.StatusOK)
+}
+
+func TestPollKeepsTheCurrentSiteWhenTheNewCommitCantBeRendered(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	repo.commit(t, map[string]string{
+		"site.yaml":       "title: Test\ntimezone: Not/A_Timezone\n",
+		"posts/second.md": post("Second", "2026-03-05"),
+	})
+
+	result, err := g.app.Poll(t.Context())
+
+	if err == nil || result != service.PollSynced {
+		t.Fatalf("poll = %v, %v; want %v and the render's error", result, err, service.PollSynced)
+	}
+	assertStatus(t, "/readyz", g.get(t, "/readyz"), http.StatusOK)
+	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)
+	assertStatus(t, "/posts/second/", g.get(t, "/posts/second/"), http.StatusNotFound)
+	// The broken commit isn't fetched and rendered again on every poll.
+	g.poll(t, service.PollUnchanged)
 }

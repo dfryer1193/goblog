@@ -58,12 +58,9 @@ func serve() {
 	}
 
 	// Serve probes straight away; readiness turns true once the first sync
-	// has rendered the site.
-	go func() {
-		if syncErr := a.Sync(context.Background()); syncErr != nil {
-			lg.Error("First sync failed", "error", syncErr)
-		}
-	}()
+	// has rendered the site. Polling keeps it in sync from then on, and
+	// retries a failed first sync.
+	go a.Run(context.Background())
 
 	r := a.Router()
 	addr := net.JoinHostPort("", cfg.Port)
