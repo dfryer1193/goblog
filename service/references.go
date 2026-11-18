@@ -76,17 +76,17 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 		}
 		var (
 			dest *[]byte
-			kind string
+			kind referenceKind
 		)
 		switch n := n.(type) {
 		case *ast.Link:
-			dest, kind = &n.Destination, "link"
+			dest, kind = &n.Destination, linkReference
 		case *ast.Image:
-			dest, kind = &n.Destination, "image"
+			dest, kind = &n.Destination, imageReference
 		default:
 			return ast.WalkContinue, nil
 		}
-		resolved, err := x.resolve(r.from, string(*dest), kind == "image")
+		resolved, err := x.resolve(r.from, string(*dest), kind)
 		if err != nil {
 			r.errs = append(r.errs, fmt.Errorf("%s %q %w", kind, *dest, err))
 		} else {
@@ -96,10 +96,31 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 	})
 }
 
-// resolve returns the site URL for the destination dest found in the Content
-// Repository file from. Destinations that aren't relative paths, such as
-// absolute URLs, come back unchanged. An image may only point into images/.
-func (x *references) resolve(from, dest string, image bool) (string, error) {
+// referenceKind is what kind of reference a destination belongs to.
+type referenceKind int
+
+const (
+	// linkReference is a link's destination, which may point at a Post, a
+	// Page or an image.
+	linkReference referenceKind = iota
+	// imageReference is an image's source, which may only point at an
+	// image.
+	imageReference
+)
+
+// String names the kind in error messages: "link" or "image".
+func (k referenceKind) String() string {
+	if k == imageReference {
+		return "image"
+	}
+	return "link"
+}
+
+// resolve returns the site URL for the destination dest, of the given kind,
+// found in the Content Repository file from. Destinations that aren't
+// relative paths, such as absolute URLs, come back unchanged. An image may
+// only point into images/.
+func (x *references) resolve(from, dest string, kind referenceKind) (string, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
 		return "", errors.New("is not a valid URL")
@@ -116,9 +137,9 @@ func (x *references) resolve(from, dest string, image bool) (string, error) {
 	switch {
 	case strings.HasPrefix(target, imagesDir+"/"):
 		site = &url.URL{Path: "/" + target}
-	case !image && path.Dir(target) == pagesDir && path.Ext(target) == markdownExt:
+	case kind == linkReference && path.Dir(target) == pagesDir && path.Ext(target) == markdownExt:
 		site = &url.URL{Path: models.PageURL(fileStem(target)), Fragment: u.Fragment}
-	case !image && path.Dir(target) == postsDir && path.Ext(target) == markdownExt:
+	case kind == linkReference && path.Dir(target) == postsDir && path.Ext(target) == markdownExt:
 		site = &url.URL{Path: models.PostURL(fileStem(target)), Fragment: u.Fragment}
 	default:
 		return "", fmt.Errorf("points at %s, which isn't on the site", target)
