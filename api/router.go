@@ -21,6 +21,10 @@ import (
 // indexFile is the file served for a directory's URL.
 const indexFile = "index.html"
 
+// notFoundFile is the site's 404 page, served for every path the site
+// doesn't have.
+const notFoundFile = "404.html"
+
 // Site is the rendered site goblog serves.
 type Site interface {
 	// Ready reports whether a site has been rendered and switched in. It
@@ -53,7 +57,8 @@ func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 
 // fileHandler serves the current site's files: a directory's URL serves its
 // index.html, a directory's URL without the trailing slash redirects to it,
-// and anything else is a 404. It never lists directories. A file with a gzip
+// and anything else is a 404, answered with the site's 404.html. It never
+// lists directories. A file with a gzip
 // variant (see service.WriteSite) is served gzipped to clients that accept
 // gzip, and Cache-Control follows cacheControl.
 type fileHandler struct {
@@ -87,18 +92,18 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	f, err := files.Open(name)
 	if err != nil {
-		http.NotFound(w, r)
+		notFound(w, r, files)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		http.NotFound(w, r)
+		notFound(w, r, files)
 		return
 	}
 	if info.IsDir() {
 		if _, err = fs.Stat(files, path.Join(name, indexFile)); err != nil {
-			http.NotFound(w, r)
+			notFound(w, r, files)
 			return
 		}
 		// The target is a directory of the site, so it can't point elsewhere.
@@ -132,11 +137,43 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 	http.ServeContent(w, r, info.Name(), time.Time{}, content)
 }
 
+// notFound answers with the site's 404 page and status 404: gzipped if
+// there's a variant and the client accepts gzip, like serveFile. A site with
+// no 404 page gets a plain-text one.
+func notFound(w http.ResponseWriter, r *http.Request, files fs.FS) {
+	w.Header().Set("Cache-Control", cacheShort)
+	f, err := files.Open(notFoundFile)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	gz, err := files.Open(notFoundFile + service.GzipSuffix)
+	if err == nil {
+		defer gz.Close()
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Values("Accept-Encoding")) {
+			w.Header().Set("Content-Encoding", "gzip")
+			serveWhole(w, r, notFoundFile, gz, http.StatusNotFound)
+			return
+		}
+	}
+	serveWhole(w, r, notFoundFile, f, http.StatusNotFound)
+}
+
 // serveGzip serves gz, the gzip variant of the site file name, whole. It
 // doesn't support Range requests.
 func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) {
-	info, err := gz.Stat()
+	w.Header().Set("Content-Encoding", "gzip")
+	serveWhole(w, r, name, gz, http.StatusOK)
+}
+
+// serveWhole serves f, which holds the site file name's content (possibly
+// gzipped), whole and with the given status.
+func serveWhole(w http.ResponseWriter, r *http.Request, name string, f fs.File, status int) {
+	info, err := f.Stat()
 	if err != nil {
+		w.Header().Del("Content-Encoding")
 		serverError(w, "can't read the file")
 		return
 	}
@@ -146,11 +183,10 @@ func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) 
 		contentType = "application/octet-stream"
 	}
 	h.Set("Content-Type", contentType)
-	h.Set("Content-Encoding", "gzip")
 	h.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
-		_, _ = io.Copy(w, gz)
+		_, _ = io.Copy(w, f)
 	}
 }
 

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{with .Title}}{{.}} · {{end}}{{.Site.Title}}</title>
+<link rel="stylesheet" href="{{.Stylesheet}}">
 {{- with .Site.Description}}
 <meta name="description" content="{{.}}">
 {{- end}}
@@ -13,17 +14,43 @@
 {{- with .Site.URL}}<link rel="alternate" type="application/atom+xml" title="{{$.Site.Title}}" href="{{.}}/feed.xml">{{end}}
 </head>
 <body>
-<header><a href="/">{{.Site.Title}}</a></header>
-<nav>
-{{- range .Site.Nav}}
-<a href="{{.Link}}">{{.Name}}</a>
-{{- end}}
+<div class="frame">
+<header class="tbar">
+<details class="ham"><summary aria-label="files">☰</summary><nav class="drawer" aria-label="files">{{template "tree" .}}</nav></details>
+<span class="sess">[{{.Site.Title}}]</span><span class="sep">//</span>
+<nav class="wins" aria-label="site">
+{{- range .Windows}}
+{{- if .Current}}<a class="win cur" href="{{.Link}}" aria-current="page"><span class="wi">{{.Index}}</span><span class="wn">{{.Name}}:{{.Title}}</span></a>
+{{- else}}<a class="win" href="{{.Link}}">{{.Index}} {{.Name}}</a>
+{{- end}}<span class="sep">//</span>
+{{- end -}}
 </nav>
-<main>
+<span class="grow"></span>
+<span class="right"><span class="sep">//</span>{{.Build.Date}}<span class="sep">//</span>{{.Build.Time}}<span class="sep">//</span>{{.Build.Host}}<span class="sep">//</span></span>
+</header>
+<div class="panes">
+<aside class="pane side"><span class="label">tree</span>{{template "tree" .}}</aside>
+<main class="pane active{{if .NotFound}} err{{end}}"><span class="label">{{.Label}}</span>
+<div class="content">
 {{template "content" .}}
+</div>
 </main>
+</div>
+<footer class="info"><span>rendered from {{.Build.Host}}{{with .Build.Commit}}@{{.}}{{end}}</span><span>
+{{- if .Post}}{{template "postinfo" .Post}}
+{{- else if eq .Path "/"}}{{count (len .Posts) "post" "posts"}} · <a href="/feed.xml">feed.xml</a>
+{{- end}}</span></footer>
+</div>
 </body>
 </html>
+{{- define "tree"}}<div class="tree"><strong>~/</strong>
+{{range .Tree}}{{.Prefix}}<a{{with .Class}} class="{{.}}"{{end}} href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>
+{{end}}</div>{{end}}
+{{- define "postinfo"}}
+{{- if .PublishDate.IsZero}}draft
+{{- else if .Draft}}draft, publishes {{.PublishDate.Display}}
+{{- else}}published {{.PublishDate.Display}}{{end}} · {{count .Words "word" "words"}} · ~{{readingMinutes .Words}} min read
+{{- end}}
 {{- define "tags"}}
 {{- if .}}
 <ul class="tags">
@@ -35,13 +62,13 @@
 {{- end}}
 {{- define "date"}}
 {{- if not .PublishDate.IsZero}}<time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time>{{end}}
-{{- if .Draft}} <strong>draft</strong>{{end}}
+{{- if .Draft}} <strong class="draft">draft</strong>{{end}}
 {{- end}}
 {{- define "postlist"}}
-<ul>
+<ul class="posts">
 {{- range .}}
 <li>
-{{template "date" .}} <a href="{{.URL}}">{{.Title}}</a>
+{{template "date" .}} <a class="title" href="{{.URL}}">{{.Title}}</a>
 {{- template "tags" .Tags}}
 {{- if .Summary}}
 <p>{{.Summary}}</p>

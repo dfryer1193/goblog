@@ -73,7 +73,8 @@ when you use a deploy key.
 At startup goblog makes a shallow, single-branch clone of the Content
 Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
 renders the site into a fresh directory there and switches serving over to it.
-Until that first render, `/readyz` reports not ready. Unknown paths get a 404.
+Until that first render, `/readyz` reports not ready. Unknown paths get the
+site's own 404 page, with status 404.
 
 ### Keeping the site in sync
 

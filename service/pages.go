@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
@@ -28,32 +27,44 @@ type pageFrontMatter struct {
 	Title string `yaml:"title"`
 }
 
-// renderPages renders each Page in the Content Repository's pages/ folder
-// at /<name>/. Pages it can't use are Problems.
-func renderPages(b *siteBuild) error {
-	entries, err := fs.ReadDir(b.content, pagesDir)
+// readPages reads and renders each Page in the Content Repository's pages/
+// folder, sorted by name. Pages it can't use come back as Problems.
+func readPages(content fs.FS) ([]*models.Page, []models.Problem, error) {
+	entries, err := fs.ReadDir(content, pagesDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", pagesDir, err)
+		return nil, nil, fmt.Errorf("reading %s: %w", pagesDir, err)
 	}
 
-	md := goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: b.content}))
+	md := newMarkdown(content)
+	var (
+		pages    []*models.Page
+		problems []models.Problem
+	)
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(pagesDir, e.Name())
-		p, perr := readPage(b.content, md, name)
+		p, perr := readPage(content, md, name)
 		if perr != nil {
-			b.problems = append(b.problems, models.Problem{Path: name, Err: perr})
+			problems = append(problems, models.Problem{Path: name, Err: perr})
 			continue
 		}
-		if err = b.out.page(p.Name+"/index.html", "page", pageData{Title: p.Title, Page: p}); err != nil {
-			return fmt.Errorf("rendering %s: %w", name, err)
+		pages = append(pages, p)
+	}
+	return pages, problems, nil
+}
+
+// renderPages renders each Page at /<name>/.
+func renderPages(b *siteBuild) error {
+	for _, p := range b.pages {
+		data := pageData{Title: p.Title, Label: p.Name + markdownExt, WindowTitle: p.Name + markdownExt, Page: p}
+		if err := b.out.page(p.Name+"/index.html", "page", data); err != nil {
+			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}
-		b.pages = append(b.pages, p)
 	}
 	return nil
 }
@@ -102,10 +113,10 @@ func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, e
 // also works on case-insensitive filesystems.
 var reservedPaths = map[string]bool{ //nolint:gochecknoglobals // fixed set
 	// Rendered from the Content Repository.
-	"index.html": true, "posts": true, tagsSection: true, "images": true,
+	"index.html": true, postsDir: true, tagsSection: true, "images": true,
 	"feed.xml": true, "sitemap.xml": true, "404.html": true,
-	// Room for the stylesheet, fonts and other static files.
-	"static": true, "assets": true, "css": true, "fonts": true, "js": true,
+	// The stylesheet, fonts and their licences, and room for more.
+	"static": true, assetsSection: true, "css": true, "fonts": true, "js": true, licensesSection: true,
 	"favicon.ico": true, "robots.txt": true,
 	// Served by goblog itself: mjolnir's probes and the webhook.
 	"livez": true, "readyz": true, "startupz": true, "webhook": true,

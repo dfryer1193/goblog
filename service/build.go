@@ -42,8 +42,10 @@ type siteBuild struct {
 	// posts are the Posts the site shows, newest first: the Published
 	// Posts, plus the Drafts if the build includes them.
 	posts []*models.Post
-	// pages are the Pages the site shows, by name. renderPages sets them.
+	// pages are the Pages, sorted by name.
 	pages []*models.Page
+	// tags are the tags of posts, sorted by slug.
+	tags []*models.Tag
 	// out collects the output files.
 	out *output
 	// problems are the files the build skipped so far.
@@ -60,6 +62,7 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 	renderTags,
 	renderFeed,
 	renderSitemap,
+	renderNotFound,
 	copyImages,
 }
 
@@ -103,6 +106,16 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	b.problems = append(b.problems, problems...)
 	b.posts = listedPosts(posts, opts.IncludeDrafts)
 	slices.SortFunc(b.posts, newestFirst)
+	b.tags = collectTags(b.posts)
+
+	pages, problems, err := readPages(content)
+	if err != nil {
+		return nil, err
+	}
+	b.problems = append(b.problems, problems...)
+	b.pages = pages
+	b.out.tree = makeTree(b.posts, b.tags, b.pages)
+	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
 
 	for _, step := range buildSteps {
 		if err = step(b); err != nil {
@@ -114,17 +127,24 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 
 // renderIndex renders the index: every listed Post, newest first.
 func renderIndex(b *siteBuild) error {
-	return b.out.page("index.html", "index", pageData{Posts: b.posts})
+	return b.out.page("index.html", "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
 }
 
 // renderPostPages renders one page per listed Post, at /posts/<slug>/.
 func renderPostPages(b *siteBuild) error {
 	for _, p := range b.posts {
-		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{Title: p.Title, Post: p}); err != nil {
+		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{
+			Title: p.Title, Label: p.Slug + markdownExt, WindowTitle: p.Slug + markdownExt, Post: p,
+		}); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}
 	}
 	return nil
+}
+
+// renderNotFound renders /404.html, the page for paths the site doesn't have.
+func renderNotFound(b *siteBuild) error {
+	return b.out.page("404.html", "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
 }
 
 // listedPosts returns the posts that the site shows: the Published Posts,

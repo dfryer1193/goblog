@@ -112,7 +112,7 @@ func TestTagsWithTheSameURLAreOneTagNamedAsOnTheNewestPost(t *testing.T) {
 	assertNoProblems(t, site)
 	tags := page(t, site, "tags/index.html")
 	assertContains(t, "tags", tags, `<a href="/tags/homelab/">#HomeLab</a> (2)`)
-	if strings.Count(tags, "/tags/homelab/") != 1 {
+	if strings.Count(between(t, tags, "<main", "</main>"), "/tags/homelab/") != 1 {
 		t.Errorf("tags lists homelab more than once:\n%s", tags)
 	}
 	assertInOrder(t, "homelab", page(t, site, "tags/homelab/index.html"), ">New<", ">Old<")
