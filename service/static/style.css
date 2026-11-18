@@ -162,7 +162,7 @@ a:hover { text-decoration: underline; }
 .content { max-width: 80ch; }
 .content > h1, article > h1 { font-size: 1.25em; margin: 0 0 .4em; }
 .meta { color: var(--dim); margin: 0 0 1.5em; }
-.meta time { color: var(--yellow); }
+.meta time { color: var(--yellow); margin-right: 1ch; }
 .draft { color: var(--red); }
 ul.tags { display: inline; list-style: none; margin: 0; padding: 0; }
 ul.tags li { display: inline; margin-right: 1ch; }
