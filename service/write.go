@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +21,8 @@ const (
 )
 
 // WriteSite writes every file of site under dir, creating dir if needed.
+// Next to each compressible text file it writes a gzip variant, named with an
+// added ".gz", for serving to clients that accept gzip.
 //
 // dir must not exist yet or be empty, so that no stale files from an earlier
 // build are left behind and nothing already there is overwritten.
@@ -42,6 +46,40 @@ func WriteSite(dir string, site *models.Site) error {
 		if err = root.WriteFile(name, site.Files[name], outputFileMode); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
+	}
+	for _, name := range site.Paths() {
+		if _, taken := site.Files[name+GzipSuffix]; taken || !compressible(name) {
+			continue
+		}
+		if err = writeGzipVariant(root, name, site.Files[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeGzipVariant writes name's gzip variant into root, unless data is too
+// small to be worth compressing or doesn't get smaller.
+func writeGzipVariant(root *os.Root, name string, data []byte) error {
+	if len(data) < minGzipSize {
+		return nil
+	}
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return fmt.Errorf("compressing %s: %w", name, err)
+	}
+	if _, err = zw.Write(data); err != nil {
+		return fmt.Errorf("compressing %s: %w", name, err)
+	}
+	if err = zw.Close(); err != nil {
+		return fmt.Errorf("compressing %s: %w", name, err)
+	}
+	if buf.Len() >= len(data) {
+		return nil
+	}
+	if err = root.WriteFile(name+GzipSuffix, buf.Bytes(), outputFileMode); err != nil {
+		return fmt.Errorf("writing %s: %w", name+GzipSuffix, err)
 	}
 	return nil
 }

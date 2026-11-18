@@ -247,18 +247,37 @@ type response struct {
 	body   string
 }
 
-// get requests path from goblog.
+// get requests path from goblog, the way a client that doesn't accept gzip
+// would.
 func (g *goblog) get(t *testing.T, path string) response {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.srv.URL+path, http.NoBody)
+	return g.request(t, http.MethodGet, path, nil)
+}
+
+// request sends a method request for path to goblog with header added.
+// Redirects aren't followed, and the body isn't decompressed: no
+// Accept-Encoding is sent unless header has one.
+func (g *goblog) request(t *testing.T, method, path string, header http.Header) response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, g.srv.URL+path, http.NoBody)
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}
-	client := g.srv.Client()
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	maps.Copy(req.Header, header)
+	transport, ok := g.srv.Client().Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("the test server's client has no *http.Transport")
+	}
+	transport = transport.Clone()
+	transport.DisableCompression = true
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("GET %s: %v", path, err)
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
