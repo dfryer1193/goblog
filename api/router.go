@@ -49,8 +49,12 @@ func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 		return nil, fmt.Errorf("building router: %w", err)
 	}
 
+	pages, err := renderFallbackPages()
+	if err != nil {
+		return nil, err
+	}
 	r.Handle(WebhookPath, webhookHandler{hook: hook})
-	files := fileHandler{site: site}
+	files := fileHandler{site: site, pages: pages}
 	r.Handle("/*", files)
 	return r, nil
 }
@@ -62,7 +66,8 @@ func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 // variant (see service.WriteSite) is served gzipped to clients that accept
 // gzip, and Cache-Control follows cacheControl.
 type fileHandler struct {
-	site Site
+	site  Site
+	pages fallbackPages
 }
 
 func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,18 +97,18 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	f, err := files.Open(name)
 	if err != nil {
-		notFound(w, r, files)
+		h.notFound(w, r, files)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		notFound(w, r, files)
+		h.notFound(w, r, files)
 		return
 	}
 	if info.IsDir() {
 		if _, err = fs.Stat(files, path.Join(name, indexFile)); err != nil {
-			notFound(w, r, files)
+			h.notFound(w, r, files)
 			return
 		}
 		// The target is a directory of the site, so it can't point elsewhere.
@@ -138,27 +143,46 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 }
 
 // notFound answers with the site's 404 page and status 404: gzipped if
-// there's a variant and the client accepts gzip, like serveFile. A site with
-// no 404 page gets a plain-text one.
-func notFound(w http.ResponseWriter, r *http.Request, files fs.FS) {
+// there's a variant and the client accepts gzip, like serveFile. If the site
+// has no 404 page, or it can't be read, the built-in one answers instead.
+func (h fileHandler) notFound(w http.ResponseWriter, r *http.Request, files fs.FS) {
 	w.Header().Set("Cache-Control", cacheShort)
-	f, err := files.Open(notFoundFile)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
-	gz, err := files.Open(notFoundFile + service.GzipSuffix)
-	if err == nil {
-		defer gz.Close()
-		w.Header().Add("Vary", "Accept-Encoding")
-		if acceptsGzip(r.Header.Values("Accept-Encoding")) {
+	gzName := notFoundFile + service.GzipSuffix
+	_, err := fs.Stat(files, gzName)
+	hasGzip := err == nil
+	if hasGzip && acceptsGzip(r.Header.Values("Accept-Encoding")) {
+		if gz, info, ok := openRegular(files, gzName); ok {
+			defer gz.Close()
+			w.Header().Add("Vary", "Accept-Encoding")
 			w.Header().Set("Content-Encoding", "gzip")
-			serveWhole(w, r, notFoundFile, gz, http.StatusNotFound)
+			writeWhole(w, r, notFoundFile, gz, info.Size(), http.StatusNotFound)
 			return
 		}
 	}
-	serveWhole(w, r, notFoundFile, f, http.StatusNotFound)
+	f, info, ok := openRegular(files, notFoundFile)
+	if !ok {
+		h.pages.serveNotFound(w, r)
+		return
+	}
+	defer f.Close()
+	if hasGzip {
+		w.Header().Add("Vary", "Accept-Encoding")
+	}
+	writeWhole(w, r, notFoundFile, f, info.Size(), http.StatusNotFound)
+}
+
+// openRegular opens the site file name if it's a regular file.
+func openRegular(files fs.FS, name string) (fs.File, fs.FileInfo, bool) {
+	f, err := files.Open(name)
+	if err != nil {
+		return nil, nil, false
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, false
+	}
+	return f, info, true
 }
 
 // serveGzip serves gz, the gzip variant of the site file name, whole. It
@@ -177,13 +201,19 @@ func serveWhole(w http.ResponseWriter, r *http.Request, name string, f fs.File, 
 		serverError(w, "can't read the file")
 		return
 	}
+	writeWhole(w, r, name, f, info.Size(), status)
+}
+
+// writeWhole writes f, size bytes of the site file name's content (possibly
+// gzipped), with the given status.
+func writeWhole(w http.ResponseWriter, r *http.Request, name string, f io.Reader, size int64, status int) {
 	h := w.Header()
 	contentType := mime.TypeByExtension(path.Ext(name))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	h.Set("Content-Type", contentType)
-	h.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	h.Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, f)
