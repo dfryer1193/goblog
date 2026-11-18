@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/health"
 	"github.com/dfryer1193/mjolnir/router"
+
+	"github.com/dfryer1193/goblog/service"
 )
 
 // indexFile is the file served for a directory's URL.
@@ -94,10 +98,49 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	serveFile(w, r, files, name, f, info)
+}
+
+// serveFile serves the site file name, already open as f: its gzip variant
+// if there is one and the client accepts gzip, else f itself.
+func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string, f fs.File, info fs.FileInfo) {
+	gz, err := files.Open(name + service.GzipSuffix)
+	if err == nil {
+		defer gz.Close()
+		w.Header().Add("Vary", "Accept-Encoding")
+		// A Range is of the plain file's bytes, so a Range request gets the
+		// plain file.
+		if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Values("Accept-Encoding")) {
+			serveGzip(w, r, name, gz)
+			return
+		}
+	}
 	content, ok := f.(io.ReadSeeker)
 	if !ok {
 		http.Error(w, "file isn't seekable", http.StatusInternalServerError)
 		return
 	}
 	http.ServeContent(w, r, info.Name(), time.Time{}, content)
+}
+
+// serveGzip serves gz, the gzip variant of the site file name, whole. It
+// doesn't support Range requests.
+func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) {
+	info, err := gz.Stat()
+	if err != nil {
+		http.Error(w, "can't read the file", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	contentType := mime.TypeByExtension(path.Ext(name))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	h.Set("Content-Type", contentType)
+	h.Set("Content-Encoding", "gzip")
+	h.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, gz)
+	}
 }
