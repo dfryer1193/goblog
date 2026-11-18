@@ -74,10 +74,14 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	if err = yaml.Unmarshal(fm, &meta); err != nil {
 		return nil, fmt.Errorf("invalid front matter: %w", err)
 	}
+	title := strings.TrimSpace(meta.Title)
+	if title == "" {
+		return nil, errors.New("front matter has no title")
+	}
 	post := &models.Post{
 		Path:    name,
 		Slug:    strings.TrimSuffix(path.Base(name), ".md"),
-		Title:   meta.Title,
+		Title:   title,
 		Tags:    meta.Tags,
 		Summary: meta.Summary,
 	}

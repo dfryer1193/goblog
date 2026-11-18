@@ -156,6 +156,43 @@ func TestPublishDateArrivesAtMidnightInTheBuildTimezone(t *testing.T) {
 	}
 }
 
+func TestInvalidFrontMatterSkipsThatPostAndTheRestStillRenders(t *testing.T) {
+	tests := []struct {
+		name    string
+		post    string
+		wantErr string
+	}{
+		{"missing title", "---\ndate: 2026-01-01\n---\nBody.\n", "title"},
+		{"blank title", "---\ntitle: \"  \"\ndate: 2026-01-01\n---\nBody.\n", "title"},
+		{"no front matter", "Just Markdown.\n", "front matter"},
+		{"unclosed front matter", "---\ntitle: Open\ndate: 2026-01-01\n", "front matter"},
+		{"malformed date", "---\ntitle: Bad date\ndate: 2026-1-5\n---\n", "2026-1-5"},
+		{"impossible date", "---\ntitle: Bad date\ndate: 2026-02-30\n---\n", "2026-02-30"},
+		{"date with a time", "---\ntitle: Bad date\ndate: 2026-01-05T10:00:00Z\n---\n", "2026-01-05T10:00:00Z"},
+		{"invalid YAML", "---\ntitle: [unclosed\n---\n", "front matter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := contentRepo(map[string]string{
+				"posts/broken.md": tt.post,
+				"posts/fine.md":   "---\ntitle: Fine\ndate: 2026-01-01\n---\n",
+			})
+
+			site := build(t, repo, now, service.BuildOptions{})
+
+			if len(site.Problems) != 1 {
+				t.Fatalf("got problems %v, want exactly one for posts/broken.md", site.Problems)
+			}
+			problem := site.Problems[0].String()
+			assertContains(t, "problem", problem, "posts/broken.md")
+			assertContains(t, "problem", problem, tt.wantErr)
+			assertContains(t, "index", page(t, site, "index.html"), ">Fine<")
+			page(t, site, "posts/fine/index.html")
+			assertNoFile(t, site, "posts/broken/index.html")
+		})
+	}
+}
+
 func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 	repo := contentRepo(map[string]string{
 		"posts/picluster.md": "---\ntitle: Building a Pi cluster\ndate: 2026-01-05\n---\n\n" +
