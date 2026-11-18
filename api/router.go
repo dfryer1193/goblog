@@ -64,6 +64,7 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	files := h.site.Files()
 	if files == nil {
+		w.Header().Set("Cache-Control", cacheNever)
 		http.Error(w, "goblog hasn't rendered the site yet", http.StatusServiceUnavailable)
 		return
 	}
@@ -76,6 +77,9 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(urlPath, "/") {
 		name = path.Join(name, indexFile)
 	}
+	// Until there's a file to serve, the answer (a redirect or a 404) may
+	// change with the next render.
+	w.Header().Set("Cache-Control", cacheShort)
 
 	f, err := files.Open(name)
 	if err != nil {
@@ -104,6 +108,7 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveFile serves the site file name, already open as f: its gzip variant
 // if there is one and the client accepts gzip, else f itself.
 func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string, f fs.File, info fs.FileInfo) {
+	w.Header().Set("Cache-Control", cacheControl(name))
 	gz, err := files.Open(name + service.GzipSuffix)
 	if err == nil {
 		defer gz.Close()
@@ -117,7 +122,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 	}
 	content, ok := f.(io.ReadSeeker)
 	if !ok {
-		http.Error(w, "file isn't seekable", http.StatusInternalServerError)
+		serverError(w, "file isn't seekable")
 		return
 	}
 	http.ServeContent(w, r, info.Name(), time.Time{}, content)
@@ -128,7 +133,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) {
 	info, err := gz.Stat()
 	if err != nil {
-		http.Error(w, "can't read the file", http.StatusInternalServerError)
+		serverError(w, "can't read the file")
 		return
 	}
 	h := w.Header()
@@ -143,4 +148,11 @@ func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) 
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, gz)
 	}
+}
+
+// serverError responds with a 500 that nothing caches.
+func serverError(w http.ResponseWriter, text string) {
+	w.Header().Del("Vary")
+	w.Header().Set("Cache-Control", cacheNever)
+	http.Error(w, text, http.StatusInternalServerError)
 }
