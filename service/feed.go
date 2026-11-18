@@ -6,6 +6,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/dfryer1193/goblog/models"
@@ -93,7 +95,7 @@ func renderFeed(b *siteBuild) error {
 			Updated:   updated,
 			Links:     []atomLink{{Rel: "alternate", Type: "text/html", Href: b.absURL(p.URL())}},
 			Summary:   p.Summary,
-			Content:   atomText{Type: "html", Text: string(p.Body)},
+			Content:   atomText{Type: "html", Text: b.absoluteLinks(string(p.Body))},
 		}
 		for _, tag := range p.Tags {
 			e.Categories = append(e.Categories, atomCategory{Term: tag})
@@ -128,4 +130,21 @@ func (b *siteBuild) publishTime(d models.Date) string {
 // the base URL, escaping it as needed.
 func (b *siteBuild) absURL(p string) string {
 	return b.settings.URL + (&url.URL{Path: p}).EscapedPath()
+}
+
+// siteRelativeAttr matches an href or src attribute holding a site-absolute
+// path such as /posts/x/ (but not a //host URL) in a rendered Post. Goldmark
+// writes every attribute in double quotes and escapes quotes in text, and it
+// drops raw HTML, so this only ever matches the attributes it wrote.
+var siteRelativeAttr = regexp.MustCompile(`\s(?:href|src)="/(?:[^/"][^"]*)?"`)
+
+// absoluteLinks rewrites the site-absolute links and images in a rendered
+// Post's HTML to absolute URLs, so that they work in a feed reader. Links to
+// other sites, fragments and the like are left alone. The paths are already
+// escaped.
+func (b *siteBuild) absoluteLinks(html string) string {
+	return siteRelativeAttr.ReplaceAllStringFunc(html, func(attr string) string {
+		i := strings.IndexByte(attr, '"') + 1
+		return attr[:i] + b.settings.URL + attr[i:]
+	})
 }

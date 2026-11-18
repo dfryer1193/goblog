@@ -119,3 +119,39 @@ func assertLink(t *testing.T, name string, links []atomLink, rel, href string) {
 	}
 	t.Errorf("%s has no %s link to %s: %+v", name, rel, href, links)
 }
+
+func TestFeedContentLinksAndImagesAreAbsolute(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/x.md": "---\ntitle: X\ndate: 2026-01-01\n---\n" +
+			"See [the other](./other.md#part), [about](../pages/about.md), [root](/), [far](https://elsewhere.example/a), " +
+			"[mail](mailto:me@example.com), [here](#top) and [proto](//cdn.example/x).\n\n" +
+			"![a pic](../images/a.png)\n\n" +
+			"`<a href=\"/code\">` is code.\n",
+		"posts/other.md": "---\ntitle: Other\ndate: 2026-01-01\n---\n",
+		"pages/about.md": "---\ntitle: About\n---\n",
+		"images/a.png":   "png",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	var content string
+	for _, e := range feed(t, site).Entries {
+		if e.Title == "X" {
+			content = e.Content.Text
+		}
+	}
+	for _, want := range []string{
+		`href="https://blog.example.com/posts/other/#part"`,
+		`href="https://blog.example.com/about/"`,
+		`href="https://blog.example.com/"`,
+		`href="https://elsewhere.example/a"`,
+		`href="mailto:me@example.com"`,
+		`href="#top"`,
+		`href="//cdn.example/x"`,
+		`src="https://blog.example.com/images/a.png"`,
+		`<code>&lt;a href=&quot;/code&quot;&gt;</code>`,
+	} {
+		assertContains(t, "X's feed content", content, want)
+	}
+}
