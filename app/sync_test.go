@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,4 +187,52 @@ func TestPollKeepsTheCurrentSiteWhenTheNewCommitCantBeRendered(t *testing.T) {
 	assertStatus(t, "/posts/second/", g.get(t, "/posts/second/"), http.StatusNotFound)
 	// The broken commit isn't fetched and rendered again on every poll.
 	g.poll(t, service.PollUnchanged)
+}
+
+// Run with -race: the clone isn't safe for concurrent use, so overlapping
+// syncs or renders show up as data races.
+func TestConcurrentTriggersDontOverlap(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	repo.commit(t, map[string]string{
+		"posts/second.md":    post("Second", "2026-03-05"),
+		"posts/scheduled.md": post("Scheduled", "2026-03-11"),
+	})
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if resp := g.webhook(
+				t,
+				"push",
+				pushBody,
+				sign(webhookSecret, pushBody),
+			); resp.status != http.StatusAccepted {
+				t.Errorf("POST /webhook status = %d, want %d", resp.status, http.StatusAccepted)
+			}
+		})
+		wg.Go(func() {
+			if _, err := g.app.Poll(t.Context()); err != nil {
+				t.Errorf("poll: %v", err)
+			}
+		})
+		wg.Go(func() {
+			if err := g.app.Sync(t.Context()); err != nil {
+				t.Errorf("sync: %v", err)
+			}
+		})
+		wg.Go(func() { g.clock.advance(3 * time.Hour) })
+	}
+	wg.Wait()
+	g.app.WaitForSyncs()
+
+	assertStatus(t, "/posts/second/", g.get(t, "/posts/second/"), http.StatusOK)
+	// The clock ends at 03:00 on the 11th, so the last render was on the
+	// 10th or 11th; on the 12th a poll renders again.
+	g.clock.set(time.Date(2026, time.March, 12, 12, 0, 0, 0, time.UTC))
+	g.poll(t, service.PollRerendered)
+	assertStatus(t, "/posts/scheduled/", g.get(t, "/posts/scheduled/"), http.StatusOK)
 }

@@ -161,6 +161,13 @@ func (c *testClock) set(at time.Time) {
 	c.now = at
 }
 
+// advance moves the clock on by d.
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
 // goblog is a running goblog under test.
 type goblog struct {
 	app   *app.App
