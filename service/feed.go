@@ -1,10 +1,8 @@
 package service
 
 import (
-	"bytes"
 	"cmp"
 	"encoding/xml"
-	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -103,16 +101,7 @@ func renderFeed(b *siteBuild) error {
 		f.Entries = append(f.Entries, e)
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString(xml.Header)
-	enc := xml.NewEncoder(&buf)
-	enc.Indent("", "  ")
-	if err := enc.Encode(f); err != nil {
-		return fmt.Errorf("rendering %s: %w", feedFile, err)
-	}
-	buf.WriteByte('\n')
-	b.out.files[feedFile] = buf.Bytes()
-	return nil
+	return b.out.xml(feedFile, f)
 }
 
 // publishedPosts returns the Published Posts among posts, in the same order.

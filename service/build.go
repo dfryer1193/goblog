@@ -42,6 +42,8 @@ type siteBuild struct {
 	// posts are the Posts the site shows, newest first: the Published
 	// Posts, plus the Drafts if the build includes them.
 	posts []*models.Post
+	// pages are the Pages the site shows, by name. renderPages sets them.
+	pages []*models.Page
 	// out collects the output files.
 	out *output
 	// problems are the files the build skipped so far.
@@ -57,6 +59,7 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 	renderPages,
 	renderTags,
 	renderFeed,
+	renderSitemap,
 	copyImages,
 }
 

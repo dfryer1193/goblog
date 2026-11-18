@@ -53,6 +53,7 @@ func renderPages(b *siteBuild) error {
 		if err = b.out.page(p.Name+"/index.html", "page", pageData{Title: p.Title, Page: p}); err != nil {
 			return fmt.Errorf("rendering %s: %w", name, err)
 		}
+		b.pages = append(b.pages, p)
 	}
 	return nil
 }
