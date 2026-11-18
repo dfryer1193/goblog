@@ -25,9 +25,9 @@ type sitemapURL struct {
 // absolute URLs: the index, the Published Posts, the Pages, /tags/ and the
 // tags of the Published Posts. Drafts and tags only Drafts have are left
 // out, even when the build includes them. It needs the base URL, so without
-// one there's no sitemap.
+// one (see hasFeed) there's no sitemap.
 func renderSitemap(b *siteBuild) error {
-	if b.settings.URL == "" {
+	if !hasFeed(&b.settings) {
 		return nil
 	}
 	posts := publishedPosts(b.posts)

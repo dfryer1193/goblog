@@ -42,9 +42,28 @@ A Post's front matter needs a `title`. Its optional `date` (`YYYY-MM-DD`) is its
 Publish Date. A Post without one, or with one still in the future, is a Draft
 and isn't published. Only the default branch is published.
 
+`site.yaml` must set the site's `title` and its base `url`, e.g.
+`url: https://blog.example.com`. A `site.yaml` without them is invalid, so the
+build fails and a running goblog keeps serving the previous site. Everything
+else in it is optional:
+
+```yaml
+title: Werewolf Notes          # required
+url: https://blog.example.com  # required: absolute http(s), no query or fragment
+author: D. Author
+description: Homelab things
+timezone: America/New_York     # an IANA name; decides when Publish Dates arrive (default UTC)
+nav:                           # the status bar's windows, in order
+  - {name: posts, link: /}
+  - {name: tags, link: /tags/}
+  - {name: about, link: /about/}
+```
+
 The site publishes an Atom feed of the Published Posts at `/feed.xml` and a
-sitemap at `/sitemap.xml`. Both need absolute URLs, so they're only built when
-`site.yaml` sets the site's base `url`, e.g. `url: https://blog.example.com`.
+sitemap at `/sitemap.xml`, both with absolute URLs under `url`. A Content
+Repository with no `site.yaml` at all still builds, for previewing, with
+default settings, but that's reported as a problem, and the site then has no
+feed or sitemap, and nothing links to them.
 
 ## Running goblog
 

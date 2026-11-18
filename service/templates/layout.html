@@ -11,7 +11,7 @@
 {{- with .Site.Author}}
 <meta name="author" content="{{.}}">
 {{- end}}
-{{- with .Site.URL}}<link rel="alternate" type="application/atom+xml" title="{{$.Site.Title}}" href="{{.}}/feed.xml">{{end}}
+{{- with .Feed}}<link rel="alternate" type="application/atom+xml" title="{{$.Site.Title}}" href="{{$.Site.URL}}{{.}}">{{end}}
 </head>
 <body>
 <div class="frame">
@@ -38,7 +38,7 @@
 </div>
 <footer class="info"><span>rendered from {{.Build.Host}}{{with .Build.Commit}}@{{.}}{{end}}</span><span>
 {{- if .Post}}{{template "postinfo" .Post}}
-{{- else if eq .Path "/"}}{{count (len .Posts) "post" "posts"}} · <a href="/feed.xml">feed.xml</a>
+{{- else if eq .Path "/"}}{{count (len .Posts) "post" "posts"}}{{with .Feed}} · <a href="{{.}}">feed.xml</a>{{end}}
 {{- end}}</span></footer>
 </div>
 </body>

@@ -61,9 +61,10 @@ type atomText struct {
 
 // renderFeed renders /feed.xml, an Atom feed of the Published Posts, newest
 // first, with their full content. Drafts are never in it, even when the build
-// includes them. It needs the base URL, so without one there's no feed.
+// includes them. It needs the base URL, so without one (see hasFeed)
+// there's no feed.
 func renderFeed(b *siteBuild) error {
-	if b.settings.URL == "" {
+	if !hasFeed(&b.settings) {
 		return nil
 	}
 	f := atomFeed{
@@ -102,6 +103,13 @@ func renderFeed(b *siteBuild) error {
 	}
 
 	return b.out.xml(feedFile, f)
+}
+
+// hasFeed reports whether a site with settings has a feed and a sitemap.
+// Both need absolute URLs, so only a site with a base URL does. site.yaml
+// must set one, so only a Content Repository without site.yaml has neither.
+func hasFeed(settings *models.SiteSettings) bool {
+	return settings.URL != ""
 }
 
 // publishedPosts returns the Published Posts among posts, in the same order.

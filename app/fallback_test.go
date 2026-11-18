@@ -170,7 +170,7 @@ func TestAFailedFirstRenderKeepsTheStartingPageUntilASyncSucceeds(t *testing.T) 
 	t.Parallel()
 	repo := newContentRepo(t)
 	repo.commit(t, map[string]string{
-		"site.yaml":      "title: Test\ntimezone: Not/A_Timezone\n",
+		"site.yaml":      "title: Test\nurl: https://blog.example.com\ntimezone: Not/A_Timezone\n",
 		"posts/hello.md": post("Hello", "2026-03-01"),
 	})
 	g := startGoblog(t, repo, nil)
@@ -181,7 +181,7 @@ func TestAFailedFirstRenderKeepsTheStartingPageUntilASyncSucceeds(t *testing.T) 
 		assertStartingPage(t, path+" after a failed render", g.get(t, path), false)
 	}
 
-	repo.commit(t, map[string]string{"site.yaml": "title: Test\n"})
+	repo.commit(t, map[string]string{"site.yaml": "title: Test\nurl: https://blog.example.com\n"})
 	g.sync(t)
 
 	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)

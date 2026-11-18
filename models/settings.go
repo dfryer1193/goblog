@@ -12,7 +12,8 @@ type SiteSettings struct {
 	// Description says what the blog is about, for page metadata.
 	Description string
 	// URL is the site's base URL, e.g. https://blog.example.com, with no
-	// trailing slash. It's "" when site.yaml doesn't set one.
+	// trailing slash. site.yaml must set it; it's "" only in the default
+	// settings, for a Content Repository with no site.yaml.
 	URL string
 	// Nav are the navigation entries, in the order the site shows them.
 	Nav []NavLink

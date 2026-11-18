@@ -127,7 +127,7 @@ func TestPollPublishesAScheduledPostWhenItsDayArrivesInTheSitesTimezone(t *testi
 	repo := newContentRepo(t)
 	repo.commit(t, map[string]string{
 		// Los Angeles is on UTC-7 from 2026-03-08.
-		"site.yaml":          "title: Test\ntimezone: America/Los_Angeles\n",
+		"site.yaml":          "title: Test\nurl: https://blog.example.com\ntimezone: America/Los_Angeles\n",
 		"posts/hello.md":     post("Hello", "2026-03-01"),
 		"posts/scheduled.md": post("Scheduled", "2026-03-11"),
 	})
@@ -173,7 +173,7 @@ func TestPollKeepsTheCurrentSiteWhenTheNewCommitCantBeRendered(t *testing.T) {
 	g := startGoblog(t, repo, nil)
 	g.sync(t)
 	repo.commit(t, map[string]string{
-		"site.yaml":       "title: Test\ntimezone: Not/A_Timezone\n",
+		"site.yaml":       "title: Test\nurl: https://blog.example.com\ntimezone: Not/A_Timezone\n",
 		"posts/second.md": post("Second", "2026-03-05"),
 	})
 

@@ -2,7 +2,6 @@ package service
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -87,16 +86,8 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 		content: content, now: now, opts: opts, settings: settings,
 		tz: tz, today: models.DateOf(now.In(tz)), out: out,
 	}
-	switch {
-	case problem != nil:
+	if problem != nil {
 		b.problems = append(b.problems, *problem)
-	case settings.URL == "":
-		// Without a base URL there are no absolute URLs, which the feed and
-		// sitemap need. A missing site.yaml's Problem already covers this.
-		b.problems = append(b.problems, models.Problem{
-			Path: settingsFile,
-			Err:  errors.New("has no url, so the site has no feed.xml or sitemap.xml"),
-		})
 	}
 
 	posts, problems, err := readPosts(content, b.today)
@@ -114,7 +105,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	}
 	b.problems = append(b.problems, problems...)
 	b.pages = pages
-	b.out.tree = makeTree(b.posts, b.tags, b.pages)
+	b.out.tree = makeTree(b.posts, b.tags, b.pages, b.out.feed)
 	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
 
 	for _, step := range buildSteps {

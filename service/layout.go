@@ -3,6 +3,7 @@ package service
 import (
 	"math"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ const (
 	treeEntry = "├── "
 	treeLast  = "└── "
 	treeDepth = "│   "
+	treeBlank = "    "
 )
 
 // treeLine is one line of the tree pane, which lists the site like `tree`
@@ -41,29 +43,47 @@ type treeLine struct {
 	Current bool
 }
 
-// makeTree lays out the tree pane for the listed posts, their tags and the
-// Pages. Lines are unselected; treeFor selects the page being shown.
-func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page) []treeLine {
-	var lines []treeLine
-	lines = append(lines, treeLine{Prefix: treeEntry, Name: postsDir + "/", URL: "/"})
-	for i, p := range posts {
-		lines = append(
-			lines,
-			treeLine{Prefix: treeDepth + branch(i, len(posts)), Name: p.Slug + markdownExt, URL: p.URL()},
-		)
+// makeTree lays out the tree pane for the listed posts, their tags, the
+// Pages and the feed at feed, if the site has one (feed isn't ""). Lines are
+// unselected; treeFor selects the page being shown.
+func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page, feed string) []treeLine {
+	postsFolder := treeFolder{entry: treeLine{Name: postsDir + "/", URL: "/"}}
+	for _, p := range posts {
+		postsFolder.children = append(postsFolder.children, treeLine{Name: p.Slug + markdownExt, URL: p.URL()})
 	}
-	lines = append(lines, treeLine{Prefix: treeEntry, Name: tagsSection + "/", URL: "/" + tagsSection + "/"})
-	for i, tag := range tags {
-		lines = append(
-			lines,
-			treeLine{Prefix: treeDepth + branch(i, len(tags)), Name: tag.Name, URL: tag.URL(), Class: "tag"},
-		)
+	tagsFolder := treeFolder{entry: treeLine{Name: tagsSection + "/", URL: "/" + tagsSection + "/"}}
+	for _, tag := range tags {
+		tagsFolder.children = append(tagsFolder.children, treeLine{Name: tag.Name, URL: tag.URL(), Class: "tag"})
 	}
+	top := []treeFolder{postsFolder, tagsFolder}
 	for _, p := range pages {
-		lines = append(lines, treeLine{Prefix: treeEntry, Name: p.Name + markdownExt, URL: p.URL()})
+		top = append(top, treeFolder{entry: treeLine{Name: p.Name + markdownExt, URL: p.URL()}})
 	}
-	lines = append(lines, treeLine{Prefix: treeLast, Name: strings.TrimPrefix(feedPath, "/"), URL: feedPath})
+	if feed != "" {
+		top = append(top, treeFolder{entry: treeLine{Name: path.Base(feed), URL: feed}})
+	}
+
+	var lines []treeLine
+	for i, folder := range top {
+		last := i == len(top)-1
+		folder.entry.Prefix = branch(i, len(top))
+		lines = append(lines, folder.entry)
+		indent := treeDepth
+		if last {
+			indent = treeBlank
+		}
+		for j, child := range folder.children {
+			child.Prefix = indent + branch(j, len(folder.children))
+			lines = append(lines, child)
+		}
+	}
 	return lines
+}
+
+// treeFolder is a top-level entry of the tree pane and the entries under it.
+type treeFolder struct {
+	entry    treeLine
+	children []treeLine
 }
 
 // branch is the tree drawing for entry i of n in a folder.

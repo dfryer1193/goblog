@@ -43,6 +43,9 @@ type pageData struct {
 	// Build is the build's date, time, host and commit. Filled in by
 	// output.page.
 	Build buildInfo
+	// Feed is the Atom feed's site path, or "" if the site has no feed.
+	// Filled in by output.page.
+	Feed string
 
 	// Title is the page's own title. Empty means the site's title.
 	Title string
@@ -84,7 +87,9 @@ type output struct {
 	// tree is the tree pane, with nothing selected.
 	tree []treeLine
 	// build is passed to every page as pageData.Build.
-	build     buildInfo
+	build buildInfo
+	// feed is passed to every page as pageData.Feed.
+	feed      string
 	templates map[string]*template.Template
 	files     map[string][]byte
 }
@@ -101,6 +106,9 @@ func newOutput(settings *models.SiteSettings) (*output, error) {
 	out := &output{
 		settings: settings, stylesheet: static.Stylesheet,
 		templates: map[string]*template.Template{}, files: maps.Clone(static.files),
+	}
+	if hasFeed(settings) {
+		out.feed = feedPath
 	}
 	for _, name := range names {
 		if name == layoutTemplate {
@@ -128,6 +136,7 @@ func (o *output) page(name, kind string, data pageData) error {
 	data.Tree = treeFor(o.tree, data.Path)
 	data.Windows = windowsFor(o.settings.Nav, &data)
 	data.Build = o.build
+	data.Feed = o.feed
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)

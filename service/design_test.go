@@ -128,6 +128,23 @@ func TestTreeListsPostsTagsPagesAndTheFeed(t *testing.T) {
 		`└── <a class="sel" href="/posts/older/" aria-current="page">older.md</a>`)
 }
 
+func TestWithoutAFeedTheTreeEndsWithItsLastEntry(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/x.md": "---\ntitle: X\ndate: 2026-01-01\ntags: [k8s, talos]\n---\n",
+	})
+	delete(repo, "site.yaml")
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	tree := between(t, page(t, site, "index.html"), `<aside class="pane side">`, `</aside>`)
+	assertInOrder(t, "tree", tree,
+		`├── <a class="sel" href="/" aria-current="page">posts/</a>`,
+		`│   └── <a href="/posts/x/">x.md</a>`,
+		`└── <a href="/tags/">tags/</a>`,
+		`    ├── <a class="tag" href="/tags/k8s/">k8s</a>`,
+		`    └── <a class="tag" href="/tags/talos/">talos</a>`)
+}
+
 // between returns the part of text from the first start to the end that
 // follows it, failing the test if either is missing.
 func between(t *testing.T, text, start, end string) string {
@@ -191,8 +208,10 @@ func TestStatusBarShowsTheSessionThenWindowsThenBuildDateTimeAndHost(t *testing.
 		`<span class="right">`+sep+"2026.03.10"+sep+"11:00"+sep+"blog"+sep+"</span>")
 }
 
-func TestStatusBarHostIsGoblogWhenTheSiteHasNoURL(t *testing.T) {
-	site := build(t, contentRepo(map[string]string{"site.yaml": "title: Test blog\n"}), now, service.BuildOptions{})
+func TestStatusBarHostIsGoblogWithoutSiteSettings(t *testing.T) {
+	repo := contentRepo(nil)
+	delete(repo, "site.yaml")
+	site := build(t, repo, now, service.BuildOptions{})
 
 	assertContains(t, "status bar", page(t, site, "index.html"),
 		`<span class="right">`+sep+"2026.03.10"+sep+"15:00"+sep+"goblog"+sep+"</span>")
@@ -302,12 +321,11 @@ func TestInfoLineSaysWhichCommitWasRenderedAndOnTheIndexThePostCountAndFeed(t *t
 
 func TestInfoLineLeavesOutTheCommitWhenItIsUnknown(t *testing.T) {
 	site := build(t, contentRepo(map[string]string{
-		"site.yaml":     "title: Test blog\n",
 		"posts/only.md": "---\ntitle: Only\ndate: 2026-01-01\n---\nOne.\n",
 	}), now, service.BuildOptions{})
 
 	info := infoLine(t, page(t, site, "index.html"))
-	assertContains(t, "index", info, "<span>rendered from goblog</span>")
+	assertContains(t, "index", info, "<span>rendered from blog</span>")
 	assertContains(t, "index", info, "<span>1 post · ")
 }
 
