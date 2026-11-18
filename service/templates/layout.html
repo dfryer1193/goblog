@@ -35,12 +35,21 @@
 </div>
 </main>
 </div>
+<footer class="info"><span>rendered from {{.Build.Host}}{{with .Build.Commit}}@{{.}}{{end}}</span><span>
+{{- if .Post}}{{template "postinfo" .Post}}
+{{- else if eq .Path "/"}}{{count (len .Posts) "post" "posts"}} · <a href="/feed.xml">feed.xml</a>
+{{- end}}</span></footer>
 </div>
 </body>
 </html>
 {{- define "tree"}}<div class="tree"><strong>~/</strong>
 {{range .Tree}}{{.Prefix}}<a{{with .Class}} class="{{.}}"{{end}} href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>
 {{end}}</div>{{end}}
+{{- define "postinfo"}}
+{{- if .PublishDate.IsZero}}draft
+{{- else if .Draft}}draft, publishes {{.PublishDate.Display}}
+{{- else}}published {{.PublishDate.Display}}{{end}} · {{count .Words "word" "words"}} · ~{{readingMinutes .Words}} min read
+{{- end}}
 {{- define "tags"}}
 {{- if .}}
 <ul class="tags">

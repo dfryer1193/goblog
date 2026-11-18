@@ -66,6 +66,9 @@ type Post struct {
 	Draft bool
 	// Body is the Post's rendered Markdown.
 	Body template.HTML
+	// Words is how many words the Post's Markdown has: everything it shows,
+	// code included, split at whitespace.
+	Words int
 }
 
 // URL is the Post's site path, e.g. /posts/picluster/.

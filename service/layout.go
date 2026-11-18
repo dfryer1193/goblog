@@ -1,7 +1,9 @@
 package service
 
 import (
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -176,4 +178,31 @@ func belongsTo(link models.NavLink, data *pageData) bool {
 	default:
 		return link.Link != "/" && strings.HasSuffix(link.Link, "/") && strings.HasPrefix(data.Path, link.Link)
 	}
+}
+
+// readingSpeed is how many words a minute the info line's reading time
+// assumes.
+const readingSpeed = 230
+
+// readingMinutes is how long n words take to read at readingSpeed, rounded
+// to the nearest minute but at least one.
+func readingMinutes(words int) int {
+	return max(1, int(math.Round(float64(words)/readingSpeed)))
+}
+
+// count formats n of something, e.g. count(1, "post", "posts") is "1 post"
+// and count(1234, "word", "words") is "1,234 words".
+func count(n int, one, many string) string {
+	digits := strconv.Itoa(n)
+	var b strings.Builder
+	for i, d := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 && digits[i-1] != '-' {
+			b.WriteByte(',')
+		}
+		b.WriteRune(d)
+	}
+	if n == 1 {
+		return b.String() + " " + one
+	}
+	return b.String() + " " + many
 }

@@ -68,6 +68,10 @@ type pageData struct {
 var templateFuncs = template.FuncMap{ //nolint:gochecknoglobals // fixed set
 	// tagURL is the site path of the tag with the given name.
 	"tagURL": models.TagURL,
+	// count formats n things, e.g. "1 post" or "1,234 words".
+	"count": count,
+	// readingMinutes is how long n words take to read, in whole minutes.
+	"readingMinutes": readingMinutes,
 }
 
 // output collects a build's output files.

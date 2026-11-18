@@ -113,6 +113,7 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	if post.Summary == "" {
 		post.Summary = firstParagraph(doc, body)
 	}
+	post.Words = countWords(doc, body)
 	var html bytes.Buffer
 	if err = md.Renderer().Render(&html, body, doc); err != nil {
 		return nil, fmt.Errorf("rendering Markdown: %w", err)
@@ -153,6 +154,38 @@ func firstParagraph(doc ast.Node, src []byte) string {
 		return ast.WalkContinue, nil
 	})
 	return strings.TrimSpace(b.String())
+}
+
+// countWords counts the words in doc, whose source is src: all the text it
+// shows, code blocks included, split at whitespace. Inline markup doesn't
+// split a word; block boundaries and line breaks do.
+func countWords(doc ast.Node, src []byte) int {
+	var b strings.Builder
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if n.Type() == ast.TypeBlock {
+			b.WriteByte(' ')
+		}
+		switch n := n.(type) {
+		case *ast.Text:
+			b.Write(n.Segment.Value(src))
+			if n.SoftLineBreak() || n.HardLineBreak() {
+				b.WriteByte(' ')
+			}
+		case *ast.String:
+			b.Write(n.Value)
+		case *ast.FencedCodeBlock, *ast.CodeBlock:
+			lines := n.Lines()
+			for i := range lines.Len() {
+				line := lines.At(i)
+				b.Write(line.Value(src))
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return len(strings.Fields(b.String()))
 }
 
 // splitFrontMatter splits a Post into its YAML front matter, fenced by "---"
