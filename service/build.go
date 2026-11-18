@@ -2,12 +2,14 @@ package service
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/yuin/goldmark"
 
 	"github.com/dfryer1193/goblog/models"
 )
@@ -46,16 +48,24 @@ type siteBuild struct {
 	pages []*models.Page
 	// tags are the tags of posts, sorted by slug.
 	tags []*models.Tag
+	// md is the Markdown converter for Posts and Pages.
+	md goldmark.Markdown
+	// docs are the parsed Markdown of the Posts and Pages, by Content
+	// Repository path, e.g. posts/x.md.
+	docs map[string]*document
 	// out collects the output files.
 	out *output
 	// problems are the files the build skipped so far.
 	problems []models.Problem
+	// warnings are what the build worked around so far.
+	warnings []models.Warning
 }
 
 // buildSteps render the site's output, in order, once the Posts are read.
 // Each adds output files with b.out.page (or to b.out.files directly) and may
 // report Problems.
 var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed list of steps
+	renderBodies,
 	renderIndex,
 	renderPostPages,
 	renderPages,
@@ -86,35 +96,27 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	b := &siteBuild{
 		content: content, now: now, opts: opts, settings: settings,
 		tz: tz, today: models.DateOf(now.In(tz)), out: out,
+		md: newMarkdown(content), docs: map[string]*document{},
 	}
-	switch {
-	case problem != nil:
+	if problem != nil {
 		b.problems = append(b.problems, *problem)
-	case settings.URL == "":
-		// Without a base URL there are no absolute URLs, which the feed and
-		// sitemap need. A missing site.yaml's Problem already covers this.
-		b.problems = append(b.problems, models.Problem{
-			Path: settingsFile,
-			Err:  errors.New("has no url, so the site has no feed.xml or sitemap.xml"),
-		})
 	}
 
-	posts, problems, err := readPosts(content, b.today)
+	posts, err := b.readPosts()
 	if err != nil {
 		return nil, err
 	}
-	b.problems = append(b.problems, problems...)
-	b.posts = listedPosts(posts, opts.IncludeDrafts)
+	b.posts = publishedPosts(posts)
+	if opts.IncludeDrafts {
+		b.posts = posts
+	}
 	slices.SortFunc(b.posts, newestFirst)
 	b.tags = collectTags(b.posts)
 
-	pages, problems, err := readPages(content)
-	if err != nil {
+	if b.pages, err = b.readPages(); err != nil {
 		return nil, err
 	}
-	b.problems = append(b.problems, problems...)
-	b.pages = pages
-	b.out.tree = makeTree(b.posts, b.tags, b.pages)
+	b.out.tree = makeTree(b.posts, b.tags, b.pages, b.out.feed)
 	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
 
 	for _, step := range buildSteps {
@@ -122,18 +124,55 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 			return nil, err
 		}
 	}
-	return &models.Site{Files: b.out.files, Problems: b.problems, Timezone: tz, Today: b.today}, nil
+	return &models.Site{
+		Files: b.out.files, Problems: b.problems, Warnings: b.warnings, Timezone: tz, Today: b.today,
+	}, nil
+}
+
+// renderBodies renders the Markdown of every Post and Page the site shows.
+// A link to a Post or Page that the site doesn't show, such as a Draft (in a
+// build that doesn't include them) or a file skipped for a Problem, is
+// rendered as its plain text, with a Warning.
+func renderBodies(b *siteBuild) error {
+	onSite := map[string]bool{}
+	for _, p := range b.posts {
+		onSite[p.Path] = true
+	}
+	for _, p := range b.pages {
+		onSite[p.Path] = true
+	}
+	render := func(name string) (template.HTML, error) {
+		d := b.docs[name]
+		b.warnings = append(b.warnings, d.unlinkMissing(name, onSite)...)
+		body, err := d.render(b.md)
+		if err != nil {
+			return "", fmt.Errorf("rendering %s: %w", name, err)
+		}
+		return body, nil
+	}
+	var err error
+	for _, p := range b.posts {
+		if p.Body, err = render(p.Path); err != nil {
+			return err
+		}
+	}
+	for _, p := range b.pages {
+		if p.Body, err = render(p.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // renderIndex renders the index: every listed Post, newest first.
 func renderIndex(b *siteBuild) error {
-	return b.out.page("index.html", "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
+	return b.out.page(models.IndexFile, "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
 }
 
 // renderPostPages renders one page per listed Post, at /posts/<slug>/.
 func renderPostPages(b *siteBuild) error {
 	for _, p := range b.posts {
-		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{
+		if err := b.out.page(indexFileFor(p.URL()), "post", pageData{
 			Title: p.Title, Label: p.Slug + markdownExt, WindowTitle: p.Slug + markdownExt, Post: p,
 		}); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
@@ -144,19 +183,19 @@ func renderPostPages(b *siteBuild) error {
 
 // renderNotFound renders /404.html, the page for paths the site doesn't have.
 func renderNotFound(b *siteBuild) error {
-	return b.out.page("404.html", "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
+	return b.out.page(models.NotFoundFile, "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
 }
 
-// listedPosts returns the posts that the site shows: the Published Posts,
-// plus the Drafts if includeDrafts is set.
-func listedPosts(posts []*models.Post, includeDrafts bool) []*models.Post {
-	var listed []*models.Post
+// publishedPosts returns the Published Posts among posts, in the same order:
+// every Post that isn't a Draft.
+func publishedPosts(posts []*models.Post) []*models.Post {
+	var published []*models.Post
 	for _, p := range posts {
-		if includeDrafts || !p.Draft {
-			listed = append(listed, p)
+		if !p.Draft {
+			published = append(published, p)
 		}
 	}
-	return listed
+	return published
 }
 
 // newestFirst orders Posts by Publish Date, newest first, then by filename so

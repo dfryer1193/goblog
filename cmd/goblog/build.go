@@ -16,7 +16,9 @@ var errProblems = errors.New("some files were skipped")
 
 // runBuild is `goblog build`: render the site once from a Content Repository
 // checkout into an output directory. It writes the output even when some
-// Posts are skipped, but then reports them and returns errProblems.
+// Posts are skipped, but then reports them and returns errProblems. Warnings,
+// about things the build worked around, are reported too, but on their own
+// they aren't a failure.
 func runBuild(args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("goblog build", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -46,6 +48,9 @@ func runBuild(args []string, stderr io.Writer) error {
 	}
 	for _, p := range site.Problems {
 		_, _ = fmt.Fprintf(stderr, "skipped %s\n", p)
+	}
+	for _, w := range site.Warnings {
+		_, _ = fmt.Fprintf(stderr, "warning: %s\n", w)
 	}
 	_, _ = fmt.Fprintf(stderr, "wrote %d files to %s\n", len(site.Files), *out)
 	if len(site.Problems) > 0 {

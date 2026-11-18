@@ -23,7 +23,7 @@ const settingsFile = "site.yaml"
 func defaultSettings() models.SiteSettings {
 	return models.SiteSettings{
 		Title: "goblog",
-		Nav:   []models.NavLink{{Name: postsWindow, Link: "/"}, {Name: tagsSection, Link: "/" + tagsSection + "/"}},
+		Nav:   []models.NavLink{{Name: postsWindow, Link: "/"}, {Name: models.TagsSection, Link: tagsURL}},
 	}
 }
 
@@ -97,12 +97,12 @@ func parseSettings(src []byte) (models.SiteSettings, error) {
 	return settings, nil
 }
 
-// parseBaseURL checks that s, if set, is an absolute http or https URL, and
-// drops any trailing slash.
+// parseBaseURL checks that s, which is required, is an absolute http or
+// https URL, and drops any trailing slash.
 func parseBaseURL(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", nil
+		return "", errors.New("url is required: set it to the site's base URL, e.g. https://blog.example.com")
 	}
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||

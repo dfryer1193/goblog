@@ -10,24 +10,21 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	"github.com/dfryer1193/goblog/models"
 )
 
 // staticDir is the folder of staticFS holding the files that come with
 // goblog rather than from the Content Repository. Its subfolders are site
-// sections: static/fonts/x.woff2 is served under /fonts/.
+// sections: static/fonts/x.woff2 is served under /fonts/ (FontsSection).
+// Files in static/licenses (LicensesSection) are the only ones that keep
+// their names; every other one gets a content hash in its name.
 const staticDir = "static"
 
 // stylesheetSource is the stylesheet template in staticFS. {{asset "x"}} in
-// it is the site path of staticFS's static/x. It's served under /assets/.
+// it is the site path of staticFS's static/x, and {{palette}} is
+// PaletteCSS. It's served under /assets/.
 const stylesheetSource = "static/style.css"
-
-// assetsSection is the site section holding the stylesheet.
-const assetsSection = "assets"
-
-// licensesSection is the site section holding the licences of the static
-// files. They're the only static files served under their own names, so
-// they mustn't go in a section that's cached for good.
-const licensesSection = "licenses"
 
 // staticFS holds the static assets: the stylesheet and the fonts, with their
 // licence.
@@ -64,7 +61,7 @@ func makeAssets() (*assets, error) {
 			return fmt.Errorf("reading %s: %w", name, rerr)
 		}
 		rel := strings.TrimPrefix(name, staticDir+"/")
-		if path.Dir(rel) == licensesSection {
+		if path.Dir(rel) == models.LicensesSection {
 			a.files[rel] = data
 			paths[rel] = "/" + rel
 			return nil
@@ -81,6 +78,7 @@ func makeAssets() (*assets, error) {
 		return nil, fmt.Errorf("reading %s: %w", stylesheetSource, err)
 	}
 	tmpl, err := template.New(stylesheetSource).Option("missingkey=error").Funcs(template.FuncMap{
+		"palette": PaletteCSS,
 		"asset": func(name string) (string, error) {
 			p, ok := paths[name]
 			if !ok {
@@ -100,7 +98,7 @@ func makeAssets() (*assets, error) {
 	if err = writeCodeCSS(&css); err != nil {
 		return nil, err
 	}
-	a.Stylesheet = a.add(path.Join(assetsSection, path.Base(stylesheetSource)), []byte(css.String()))
+	a.Stylesheet = a.add(path.Join(models.AssetsSection, path.Base(stylesheetSource)), []byte(css.String()))
 	return a, nil
 }
 

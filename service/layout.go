@@ -3,6 +3,7 @@ package service
 import (
 	"math"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 // feedPath is the site path of the Atom feed.
-const feedPath = "/feed.xml"
+const feedPath = "/" + models.FeedFile
 
 // postsWindow is the name of the navigation entry (the status bar window)
 // that the index and the Post pages belong to. It's also the index's pane
@@ -23,6 +24,7 @@ const (
 	treeEntry = "├── "
 	treeLast  = "└── "
 	treeDepth = "│   "
+	treeBlank = "    "
 )
 
 // treeLine is one line of the tree pane, which lists the site like `tree`
@@ -41,29 +43,47 @@ type treeLine struct {
 	Current bool
 }
 
-// makeTree lays out the tree pane for the listed posts, their tags and the
-// Pages. Lines are unselected; treeFor selects the page being shown.
-func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page) []treeLine {
-	var lines []treeLine
-	lines = append(lines, treeLine{Prefix: treeEntry, Name: postsDir + "/", URL: "/"})
-	for i, p := range posts {
-		lines = append(
-			lines,
-			treeLine{Prefix: treeDepth + branch(i, len(posts)), Name: p.Slug + markdownExt, URL: p.URL()},
-		)
+// makeTree lays out the tree pane for the listed posts, their tags, the
+// Pages and the feed at feed, if the site has one (feed isn't ""). Lines are
+// unselected; treeFor selects the page being shown.
+func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page, feed string) []treeLine {
+	postsFolder := treeFolder{entry: treeLine{Name: postsDir + "/", URL: "/"}}
+	for _, p := range posts {
+		postsFolder.children = append(postsFolder.children, treeLine{Name: p.Slug + markdownExt, URL: p.URL()})
 	}
-	lines = append(lines, treeLine{Prefix: treeEntry, Name: tagsSection + "/", URL: "/" + tagsSection + "/"})
-	for i, tag := range tags {
-		lines = append(
-			lines,
-			treeLine{Prefix: treeDepth + branch(i, len(tags)), Name: tag.Name, URL: tag.URL(), Class: "tag"},
-		)
+	tagsFolder := treeFolder{entry: treeLine{Name: models.TagsSection + "/", URL: tagsURL}}
+	for _, tag := range tags {
+		tagsFolder.children = append(tagsFolder.children, treeLine{Name: tag.Name, URL: tag.URL(), Class: "tag"})
 	}
+	top := []treeFolder{postsFolder, tagsFolder}
 	for _, p := range pages {
-		lines = append(lines, treeLine{Prefix: treeEntry, Name: p.Name + markdownExt, URL: p.URL()})
+		top = append(top, treeFolder{entry: treeLine{Name: p.Name + markdownExt, URL: p.URL()}})
 	}
-	lines = append(lines, treeLine{Prefix: treeLast, Name: strings.TrimPrefix(feedPath, "/"), URL: feedPath})
+	if feed != "" {
+		top = append(top, treeFolder{entry: treeLine{Name: path.Base(feed), URL: feed}})
+	}
+
+	var lines []treeLine
+	for i, folder := range top {
+		last := i == len(top)-1
+		folder.entry.Prefix = branch(i, len(top))
+		lines = append(lines, folder.entry)
+		indent := treeDepth
+		if last {
+			indent = treeBlank
+		}
+		for j, child := range folder.children {
+			child.Prefix = indent + branch(j, len(folder.children))
+			lines = append(lines, child)
+		}
+	}
 	return lines
+}
+
+// treeFolder is a top-level entry of the tree pane and the entries under it.
+type treeFolder struct {
+	entry    treeLine
+	children []treeLine
 }
 
 // branch is the tree drawing for entry i of n in a folder.
@@ -87,13 +107,20 @@ func treeFor(tree []treeLine, sitePath string) []treeLine {
 	return lines
 }
 
+// indexFileFor is the output file that serves the site path sitePath, which
+// ends in "/": "index.html" for "/", "x/index.html" for "/x/". It's the
+// inverse of sitePath for such paths.
+func indexFileFor(sitePath string) string {
+	return strings.TrimPrefix(sitePath, "/") + models.IndexFile
+}
+
 // sitePath is the site path that serves the output file name: "/" for
 // index.html, "/x/" for x/index.html, otherwise "/" + name.
 func sitePath(name string) string {
-	if name == "index.html" {
+	if name == models.IndexFile {
 		return "/"
 	}
-	if dir, ok := strings.CutSuffix(name, "/index.html"); ok {
+	if dir, ok := strings.CutSuffix(name, "/"+models.IndexFile); ok {
 		return "/" + dir + "/"
 	}
 	return "/" + name
@@ -105,7 +132,8 @@ const defaultHost = "goblog"
 // buildInfo is what the status bar and the info line say about the build.
 type buildInfo struct {
 	// Date and Time are the render time in the site's timezone, as
-	// YYYY.MM.DD and HH:MM.
+	// YYYY.MM.DD and as HH:MM with the zone's abbreviation at that time,
+	// e.g. "11:00 EDT".
 	Date, Time string
 	// Host is the first DNS label of the site's URL, e.g. "blog" for
 	// https://blog.example.com, or "goblog" if it has none.
@@ -128,7 +156,7 @@ func newBuildInfo(now time.Time, tz *time.Location, siteURL, commit string) buil
 	local := now.In(tz)
 	return buildInfo{
 		Date:   local.Format("2006.01.02"),
-		Time:   local.Format("15:04"),
+		Time:   local.Format("15:04 MST"),
 		Host:   host,
 		Commit: commit[:min(len(commit), shortCommitLen)],
 	}

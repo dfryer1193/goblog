@@ -1,10 +1,8 @@
 package service
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"path"
 	"strings"
@@ -12,10 +10,6 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/dfryer1193/goblog/models"
 )
@@ -23,104 +17,80 @@ import (
 // postsDir is the Content Repository folder holding Posts.
 const postsDir = "posts"
 
-// markdownExt is the extension of Post and Page files.
-const markdownExt = ".md"
+// postFrontMatter is a Post's YAML front matter as the author wrote it.
+type postFrontMatter struct {
+	titleFrontMatter `yaml:",inline"`
 
-// frontMatter is a Post's YAML front matter as the author wrote it.
-type frontMatter struct {
-	Title   string   `yaml:"title"`
 	Date    string   `yaml:"date"`
 	Tags    []string `yaml:"tags"`
 	Summary string   `yaml:"summary"`
 }
 
-// readPosts reads and renders every Post in content's posts/ folder, deciding
-// which are Drafts as of today. Posts it can't use come back as Problems.
-func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Problem, error) {
-	entries, err := fs.ReadDir(content, postsDir)
+// readPosts reads every Post in the Content Repository's posts/ folder,
+// deciding which are Drafts as of today, and keeps each one's Markdown in
+// b.docs to render later. Posts it can't use become Problems.
+func (b *siteBuild) readPosts() ([]*models.Post, error) {
+	entries, err := fs.ReadDir(b.content, postsDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading %s: %w", postsDir, err)
+		return nil, fmt.Errorf("reading %s: %w", postsDir, err)
 	}
 
-	md := newMarkdown(content)
-	var (
-		posts    []*models.Post
-		problems []models.Problem
-	)
+	var posts []*models.Post
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(postsDir, e.Name())
-		post, perr := readPost(content, md, name, today)
+		post, d, perr := readPost(b.content, b.md, name, b.today)
 		if perr != nil {
-			problems = append(problems, models.Problem{Path: name, Err: perr})
+			b.problems = append(b.problems, models.Problem{Path: name, Err: perr})
 			continue
 		}
+		b.docs[name] = d
 		posts = append(posts, post)
 	}
-	return posts, problems, nil
+	return posts, nil
 }
 
-// newMarkdown is the Markdown converter for Posts and Pages in content: GFM,
-// with references resolved and code blocks highlighted.
-func newMarkdown(content fs.FS) goldmark.Markdown {
-	return goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}, highlightCode()))
-}
-
-// readPost reads, validates and renders the Post at name.
-func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Date) (*models.Post, error) {
-	src, err := fs.ReadFile(content, name)
+// readPost reads and validates the Post at name, and parses its Markdown,
+// which the caller renders once it knows which Posts are on the site. The
+// Post has no Body yet.
+func readPost(
+	content fs.FS, md goldmark.Markdown, name string, today models.Date,
+) (*models.Post, *document, error) {
+	var meta postFrontMatter
+	body, err := readFrontMatter(content, name, &meta)
 	if err != nil {
-		return nil, fmt.Errorf("reading: %w", err)
-	}
-	fm, body, err := splitFrontMatter(src)
-	if err != nil {
-		return nil, err
-	}
-
-	var meta frontMatter
-	if err = yaml.Unmarshal(fm, &meta); err != nil {
-		return nil, fmt.Errorf("invalid front matter: %w", err)
-	}
-	title := strings.TrimSpace(meta.Title)
-	if title == "" {
-		return nil, errors.New("front matter has no title")
+		return nil, nil, err
 	}
 	tags, err := parseTags(meta.Tags)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	post := &models.Post{
 		Path:    name,
-		Slug:    strings.TrimSuffix(path.Base(name), markdownExt),
-		Title:   title,
+		Slug:    fileStem(name),
+		Title:   meta.Title,
 		Tags:    tags,
 		Summary: meta.Summary,
 	}
 	if post.PublishDate, err = parseDate(meta.Date); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	post.Draft = post.PublishDate.IsZero() || post.PublishDate.Compare(today) > 0
 
-	pc, refs := newReferencing(name)
-	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
-	if err = refs.err(); err != nil {
-		return nil, err
+	d, err := parseMarkdown(md, name, body)
+	if err != nil {
+		return nil, nil, err
 	}
 	if post.Summary == "" {
-		post.Summary = firstParagraph(doc, body)
+		post.Summary = firstParagraph(d.doc, d.src)
 	}
-	post.Words = countWords(doc, body)
-	var html bytes.Buffer
-	if err = md.Renderer().Render(&html, body, doc); err != nil {
-		return nil, fmt.Errorf("rendering Markdown: %w", err)
-	}
-	post.Body = template.HTML(html.String()) //nolint:gosec // goldmark escapes the author's text and drops raw HTML
-	return post, nil
+	post.Words = countWords(d.doc, d.src)
+	return post, d, nil
 }
 
 // firstParagraph returns the plain text of the first paragraph in doc, with
@@ -187,26 +157,6 @@ func countWords(doc ast.Node, src []byte) int {
 		return ast.WalkContinue, nil
 	})
 	return len(strings.Fields(b.String()))
-}
-
-// splitFrontMatter splits a Post into its YAML front matter, fenced by "---"
-// lines at the top of the file, and its Markdown body.
-func splitFrontMatter(src []byte) ([]byte, []byte, error) {
-	const fence = "---"
-	src = bytes.ReplaceAll(src, []byte("\r\n"), []byte("\n"))
-	rest, ok := bytes.CutPrefix(src, []byte(fence+"\n"))
-	if !ok {
-		return nil, nil, errors.New("no front matter: the file must start with a --- line")
-	}
-	for offset := 0; offset <= len(rest); {
-		line, _, _ := bytes.Cut(rest[offset:], []byte("\n"))
-		if string(bytes.TrimRight(line, " \t")) == fence {
-			bodyStart := min(offset+len(line)+1, len(rest))
-			return rest[:offset], rest[bodyStart:], nil
-		}
-		offset += len(line) + 1
-	}
-	return nil, nil, errors.New("front matter has no closing --- line")
 }
 
 // parseTags trims the front-matter tags and checks that each has a URL.

@@ -62,11 +62,17 @@ func TestInvalidSiteSettingsFailTheBuild(t *testing.T) {
 		{"no title", "author: Someone\n", "title"},
 		{"blank title", "title: \"  \"\n", "title"},
 		{"misspelt setting", "title: T\ntimzone: UTC\n", "timzone"},
-		{"unknown timezone", "title: T\ntimezone: Mars/Olympus_Mons\n", "Mars/Olympus_Mons"},
+		{"no url", "title: T\n", "url is required"},
+		{"blank url", "title: T\nurl: \" \"\n", "url is required"},
+		{"unknown timezone", "title: T\nurl: https://t.example\ntimezone: Mars/Olympus_Mons\n", "Mars/Olympus_Mons"},
 		{"relative base URL", "title: T\nurl: blog.example.com\n", "blog.example.com"},
 		{"non-web base URL", "title: T\nurl: ftp://blog.example.com\n", "ftp://blog.example.com"},
-		{"nav entry without a link", "title: T\nnav:\n  - name: about\n", "nav entry 1"},
-		{"nav entry without a name", "title: T\nnav:\n  - name: posts\n    link: /\n  - link: /x/\n", "nav entry 2"},
+		{"nav entry without a link", "title: T\nurl: https://t.example\nnav:\n  - name: about\n", "nav entry 1"},
+		{
+			"nav entry without a name",
+			"title: T\nurl: https://t.example\nnav:\n  - name: posts\n    link: /\n  - link: /x/\n",
+			"nav entry 2",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

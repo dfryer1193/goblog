@@ -262,3 +262,18 @@ func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 	assertContains(t, "post", post, "<table>")
 	assertContains(t, "post", post, "<del>2</del>")
 }
+
+// between returns the part of text from the first start to the end that
+// follows it, failing the test if either is missing.
+func between(t *testing.T, text, start, end string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(text, start)
+	if !ok {
+		t.Fatalf("no %q in:\n%s", start, text)
+	}
+	inner, _, ok := strings.Cut(rest, end)
+	if !ok {
+		t.Fatalf("no %q after %q in:\n%s", end, start, text)
+	}
+	return inner
+}

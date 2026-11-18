@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -168,20 +167,17 @@ func New(cfg Config) (*App, error) {
 	return a, nil
 }
 
-// Router is serve mode's HTTP handler, as mjolnir's router so main can Run
-// it.
+// Router is serve mode's HTTP handler: mjolnir's router, so main can Run it
+// and tests can serve it with httptest.
 func (a *App) Router() *router.Router {
-	return a.router
-}
-
-// Handler is serve mode's HTTP handler.
-func (a *App) Handler() http.Handler {
 	return a.router
 }
 
 // Sync is the "sync now" operation: fetch the Content Repository's latest
 // commit, render it and switch serving over. On failure the current site
-// stays. Concurrent calls run one at a time.
+// stays. Concurrent calls run one at a time. Sync and Poll are serve mode's
+// operations as the seam-2 tests drive them; the Publisher behind them is
+// an implementation detail.
 func (a *App) Sync(ctx context.Context) error {
 	if err := a.publisher.Sync(ctx); err != nil {
 		return fmt.Errorf("syncing: %w", err)

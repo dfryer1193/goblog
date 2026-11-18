@@ -48,7 +48,7 @@ func WriteSite(dir string, site *models.Site) error {
 		}
 	}
 	for _, name := range site.Paths() {
-		if _, taken := site.Files[name+GzipSuffix]; taken || !compressible(name) {
+		if _, taken := site.Files[name+models.GzipSuffix]; taken || !compressible(name) {
 			continue
 		}
 		if err = writeGzipVariant(root, name, site.Files[name]); err != nil {
@@ -78,8 +78,8 @@ func writeGzipVariant(root *os.Root, name string, data []byte) error {
 	if buf.Len() >= len(data) {
 		return nil
 	}
-	if err = root.WriteFile(name+GzipSuffix, buf.Bytes(), outputFileMode); err != nil {
-		return fmt.Errorf("writing %s: %w", name+GzipSuffix, err)
+	if err = root.WriteFile(name+models.GzipSuffix, buf.Bytes(), outputFileMode); err != nil {
+		return fmt.Errorf("writing %s: %w", name+models.GzipSuffix, err)
 	}
 	return nil
 }

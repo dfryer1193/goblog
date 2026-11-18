@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-// GzipSuffix ends the name of an output file's gzip variant:
-// "index.html.gz" is the gzip variant of "index.html".
-const GzipSuffix = ".gz"
-
 // minGzipSize is the size below which a file isn't worth compressing: the
 // gzip header and a request's overhead outweigh what it would save.
 const minGzipSize = 256

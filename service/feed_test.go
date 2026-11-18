@@ -9,24 +9,28 @@ import (
 	"github.com/dfryer1193/goblog/service"
 )
 
-func TestWithNoBaseURLTheSiteHasNoFeedOrSitemapAndThatIsAProblem(t *testing.T) {
+func TestWithoutSiteSettingsThereIsNoFeedOrSitemapAndNothingLinksToThem(t *testing.T) {
 	repo := contentRepo(map[string]string{
-		"site.yaml":  "title: No URL\n",
-		"posts/x.md": "---\ntitle: X\ndate: 2026-01-01\n---\nBody\n",
+		"posts/x.md":     "---\ntitle: X\ndate: 2026-01-01\ntags: [t]\n---\nBody\n",
+		"pages/about.md": "---\ntitle: About\n---\n",
 	})
+	delete(repo, "site.yaml")
 
 	site := build(t, repo, now, service.BuildOptions{})
 
-	if len(site.Problems) != 1 || site.Problems[0].String() !=
-		"site.yaml: has no url, so the site has no feed.xml or sitemap.xml" {
-		t.Fatalf("got problems %v, want one saying site.yaml has no url", site.Problems)
+	if len(site.Problems) != 1 || !strings.HasPrefix(site.Problems[0].String(), "site.yaml: missing") {
+		t.Fatalf("got problems %v, want only the one saying site.yaml is missing", site.Problems)
 	}
 	assertNoFile(t, site, "feed.xml")
 	assertNoFile(t, site, "sitemap.xml")
-	page(t, site, "posts/x/index.html")
-	if text := page(t, site, "index.html"); strings.Contains(text, "application/atom+xml") {
-		t.Errorf("index links to a feed that doesn't exist:\n%s", text)
+	for _, name := range []string{
+		"index.html", "posts/x/index.html", "about/index.html", "tags/index.html", "tags/t/index.html", "404.html",
+	} {
+		if text := page(t, site, name); strings.Contains(text, "feed.xml") || strings.Contains(text, "atom+xml") {
+			t.Errorf("%s links to a feed that doesn't exist:\n%s", name, text)
+		}
 	}
+	assertContains(t, "index", infoLine(t, page(t, site, "index.html")), "<span>1 post</span>")
 }
 
 // atomFeed is the part of an Atom feed the tests check.
@@ -154,6 +158,45 @@ func TestFeedContentLinksAndImagesAreAbsolute(t *testing.T) {
 	} {
 		assertContains(t, "X's feed content", content, want)
 	}
+}
+
+func TestFeedContentOnlyMakesLinkAndImageURLsAbsolute(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/x.md": "---\ntitle: X\ndate: 2026-01-01\n---\n" +
+			`Text saying href="/text" and src="/text".` + "\n\n" +
+			`[a title](./other.md "see href=&quot;/title&quot; and src=/title") ` +
+			`[quoted](</odd"path>) ` +
+			`![alt with src="/alt" in it](../images/a.png "an href=/x title")` + "\n\n" +
+			"```html\n<a href=\"/code\">code</a>\n```\n",
+		"posts/other.md": "---\ntitle: Other\ndate: 2026-01-01\n---\n",
+		"images/a.png":   "png",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	var content string
+	for _, e := range feed(t, site).Entries {
+		if e.Title == "X" {
+			content = e.Content.Text
+		}
+	}
+	for _, want := range []string{
+		`<p>Text saying href=&quot;/text&quot; and src=&quot;/text&quot;.</p>`,
+		`<a href="https://blog.example.com/posts/other/" title="see href=&quot;/title&quot; and src=/title">`,
+		`<a href="https://blog.example.com/odd%22path">quoted</a>`,
+		`<img src="https://blog.example.com/images/a.png" alt="alt with src=&quot;/alt&quot; in it" ` +
+			`title="an href=/x title">`,
+		`&lt;</span><span class="nt">a</span> <span class="na">href</span><span class="o">=</span>` +
+			`<span class="s">&#34;/code&#34;</span>`,
+	} {
+		assertContains(t, "X's feed content", content, want)
+	}
+	if n := strings.Count(content, "https://blog.example.com"); n != 3 {
+		t.Errorf("X's feed content has %d absolute URLs, want 3 (two links and the image):\n%s", n, content)
+	}
+	// The Post's own page keeps site paths.
+	assertContains(t, "post", page(t, site, "posts/x/index.html"), `<a href="/posts/other/" title=`)
 }
 
 func TestEveryPageLinksToTheFeedForAutodiscovery(t *testing.T) {

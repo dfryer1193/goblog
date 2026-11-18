@@ -1,19 +1,14 @@
 package service
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"path"
 	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/dfryer1193/goblog/models"
 )
@@ -21,91 +16,65 @@ import (
 // pagesDir is the Content Repository folder holding Pages.
 const pagesDir = "pages"
 
-// pageFrontMatter is a Page's YAML front matter as the author wrote it.
-// Pages need only a title; other fields are ignored.
-type pageFrontMatter struct {
-	Title string `yaml:"title"`
-}
-
-// readPages reads and renders each Page in the Content Repository's pages/
-// folder, sorted by name. Pages it can't use come back as Problems.
-func readPages(content fs.FS) ([]*models.Page, []models.Problem, error) {
-	entries, err := fs.ReadDir(content, pagesDir)
+// readPages reads each Page in the Content Repository's pages/ folder,
+// sorted by name, and keeps each one's Markdown in b.docs to render later.
+// Pages it can't use become Problems.
+func (b *siteBuild) readPages() ([]*models.Page, error) {
+	entries, err := fs.ReadDir(b.content, pagesDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading %s: %w", pagesDir, err)
+		return nil, fmt.Errorf("reading %s: %w", pagesDir, err)
 	}
 
-	md := newMarkdown(content)
-	var (
-		pages    []*models.Page
-		problems []models.Problem
-	)
+	var pages []*models.Page
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(pagesDir, e.Name())
-		p, perr := readPage(content, md, name)
+		p, d, perr := readPage(b.content, b.md, name)
 		if perr != nil {
-			problems = append(problems, models.Problem{Path: name, Err: perr})
+			b.problems = append(b.problems, models.Problem{Path: name, Err: perr})
 			continue
 		}
+		b.docs[name] = d
 		pages = append(pages, p)
 	}
-	return pages, problems, nil
+	return pages, nil
 }
 
 // renderPages renders each Page at /<name>/.
 func renderPages(b *siteBuild) error {
 	for _, p := range b.pages {
 		data := pageData{Title: p.Title, Label: p.Name + markdownExt, WindowTitle: p.Name + markdownExt, Page: p}
-		if err := b.out.page(p.Name+"/index.html", "page", data); err != nil {
+		if err := b.out.page(indexFileFor(p.URL()), "page", data); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}
 	}
 	return nil
 }
 
-// readPage reads, validates and renders the Page at name.
-func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, error) {
-	pageName := strings.TrimSuffix(path.Base(name), markdownExt)
+// readPage reads and validates the Page at name, and parses its Markdown,
+// which the caller renders once it knows which Pages are on the site. The
+// Page has no Body yet. A Page's front matter needs only a title; other
+// fields are ignored.
+func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, *document, error) {
+	pageName := fileStem(name)
 	if err := checkPageName(pageName); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	src, err := fs.ReadFile(content, name)
+	var meta titleFrontMatter
+	body, err := readFrontMatter(content, name, &meta)
 	if err != nil {
-		return nil, fmt.Errorf("reading: %w", err)
+		return nil, nil, err
 	}
-	fm, body, err := splitFrontMatter(src)
+	d, err := parseMarkdown(md, name, body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var meta pageFrontMatter
-	if err = yaml.Unmarshal(fm, &meta); err != nil {
-		return nil, fmt.Errorf("invalid front matter: %w", err)
-	}
-	title := strings.TrimSpace(meta.Title)
-	if title == "" {
-		return nil, errors.New("front matter has no title")
-	}
-	pc, refs := newReferencing(name)
-	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
-	if err = refs.err(); err != nil {
-		return nil, err
-	}
-	var html bytes.Buffer
-	if err = md.Renderer().Render(&html, body, doc); err != nil {
-		return nil, fmt.Errorf("rendering Markdown: %w", err)
-	}
-	return &models.Page{
-		Path:  name,
-		Name:  pageName,
-		Title: title,
-		Body:  template.HTML(html.String()), //nolint:gosec // goldmark escapes the author's text and drops raw HTML
-	}, nil
+	return &models.Page{Path: name, Name: pageName, Title: meta.Title}, d, nil
 }
 
 // reservedPaths are the top-level site paths that goblog itself uses, so no
@@ -113,12 +82,14 @@ func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, e
 // also works on case-insensitive filesystems.
 var reservedPaths = map[string]bool{ //nolint:gochecknoglobals // fixed set
 	// Rendered from the Content Repository.
-	"index.html": true, postsDir: true, tagsSection: true, "images": true,
-	"feed.xml": true, "sitemap.xml": true, "404.html": true,
+	models.IndexFile: true, models.PostsSection: true, models.TagsSection: true, models.ImagesSection: true,
+	models.FeedFile: true, models.SitemapFile: true, models.NotFoundFile: true,
 	// The stylesheet, fonts and their licences, and room for more.
-	"static": true, assetsSection: true, "css": true, "fonts": true, "js": true, licensesSection: true,
-	"favicon.ico": true, "robots.txt": true,
-	// Served by goblog itself: mjolnir's probes and the webhook.
+	"static": true, models.AssetsSection: true, "css": true, models.FontsSection: true, "js": true,
+	models.LicensesSection: true,
+	"favicon.ico":          true, "robots.txt": true,
+	// Served by goblog itself: mjolnir's probes and the webhook (api's
+	// WebhookPath, which service can't import).
 	"livez": true, "readyz": true, "startupz": true, "webhook": true,
 }
 

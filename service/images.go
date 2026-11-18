@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+
+	"github.com/dfryer1193/goblog/models"
 )
 
 // imagesDir is the Content Repository folder holding images, which may have
 // subfolders. It's copied to the same path in the output.
-const imagesDir = "images"
+const imagesDir = models.ImagesSection
 
 // imageFiles lists the images in content: every regular file under images/.
 // Symlinks, whether to files or folders, aren't followed, so nothing outside

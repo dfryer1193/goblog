@@ -7,6 +7,8 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
+
+	"github.com/dfryer1193/goblog/service"
 )
 
 // fallbackTemplate is goblog's built-in page: one self-contained HTML
@@ -20,8 +22,10 @@ var fallbackTemplate string
 // usually takes a few seconds.
 const retryAfterSeconds = 10
 
-// fallbackPage is what varies between the built-in pages.
+// fallbackPage is what varies between the built-in pages, plus the palette.
 type fallbackPage struct {
+	// Palette is the site's palette, as CSS custom properties.
+	Palette  template.CSS
 	Title    string
 	Label    string
 	Headline string
@@ -46,6 +50,7 @@ func renderFallbackPages() (fallbackPages, error) {
 		return fallbackPages{}, fmt.Errorf("parsing the built-in page: %w", err)
 	}
 	render := func(p fallbackPage) ([]byte, error) {
+		p.Palette = template.CSS(service.PaletteCSS()) //nolint:gosec // goblog's own constant CSS
 		var buf bytes.Buffer
 		if execErr := tmpl.Execute(&buf, p); execErr != nil {
 			return nil, fmt.Errorf("rendering the built-in %q page: %w", p.Label, execErr)

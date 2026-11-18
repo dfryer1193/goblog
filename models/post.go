@@ -73,11 +73,18 @@ type Post struct {
 
 // URL is the Post's site path, e.g. /posts/picluster/.
 func (p *Post) URL() string {
-	return "/posts/" + p.Slug + "/"
+	return PostURL(p.Slug)
+}
+
+// PostURL is the site path of the Post with the given slug, e.g.
+// /posts/picluster/. It's the one place Post URLs are made.
+func PostURL(slug string) string {
+	return "/" + PostsSection + "/" + slug + "/"
 }
 
 // Problem is something wrong with one file in the Content Repository that
-// made the site build skip it. The rest of the site still builds.
+// made the site build skip it. The rest of the site still builds. Compare
+// Warning, for something the build works around.
 type Problem struct {
 	// Path is the offending file in the Content Repository, e.g. posts/x.md.
 	Path string
@@ -105,5 +112,27 @@ type Page struct {
 
 // URL is the Page's site path, e.g. /about/.
 func (p *Page) URL() string {
-	return "/" + p.Name + "/"
+	return PageURL(p.Name)
+}
+
+// PageURL is the site path of the Page with the given name, e.g. /about/.
+// It's the one place Page URLs are made.
+func PageURL(name string) string {
+	return "/" + name + "/"
+}
+
+// Warning is something wrong with one file in the Content Repository that
+// the site build worked around: unlike a Problem, the file is still on the
+// site. For example, a link to a Post that isn't published is rendered as
+// plain text.
+type Warning struct {
+	// Path is the file in the Content Repository, e.g. posts/x.md.
+	Path string
+	// Message says what's wrong and what the build did about it.
+	Message string
+}
+
+// String formats the Warning as "<path>: <message>".
+func (w Warning) String() string {
+	return w.Path + ": " + w.Message
 }

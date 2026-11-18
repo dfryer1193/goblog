@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"strconv"
@@ -15,15 +14,8 @@ import (
 	"github.com/dfryer1193/mjolnir/health"
 	"github.com/dfryer1193/mjolnir/router"
 
-	"github.com/dfryer1193/goblog/service"
+	"github.com/dfryer1193/goblog/models"
 )
-
-// indexFile is the file served for a directory's URL.
-const indexFile = "index.html"
-
-// notFoundFile is the site's 404 page, served for every path the site
-// doesn't have.
-const notFoundFile = "404.html"
 
 // Site is the rendered site goblog serves.
 type Site interface {
@@ -91,34 +83,29 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		name = "."
 	}
 	if strings.HasSuffix(urlPath, "/") {
-		name = path.Join(name, indexFile)
+		name = path.Join(name, models.IndexFile)
 	}
 	// Until there's a file to serve, the answer (a redirect or a 404) may
 	// change with the next render.
 	w.Header().Set("Cache-Control", cacheShort)
 
-	f, err := files.Open(name)
-	if err != nil {
+	info, err := fs.Stat(files, name)
+	switch {
+	case err != nil:
 		h.notFound(w, r, files)
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		h.notFound(w, r, files)
-		return
-	}
-	if info.IsDir() {
-		if _, err = fs.Stat(files, path.Join(name, indexFile)); err != nil {
+	case info.IsDir():
+		if _, err = fs.Stat(files, path.Join(name, models.IndexFile)); err != nil {
 			h.notFound(w, r, files)
 			return
 		}
 		// The target is a directory of the site, so it can't point elsewhere.
 		http.Redirect(w, r, "/"+name+"/", http.StatusMovedPermanently) //nolint:gosec // see above
-
-		return
+	default:
+		w.Header().Set("Cache-Control", cacheControl(name))
+		if !sendFile(w, r, files, name, http.StatusOK) {
+			h.notFound(w, r, files)
+		}
 	}
-	serveFile(w, r, files, name, f, info)
 }
 
 // serveMissing answers a request for a path the site doesn't have: the
@@ -132,56 +119,46 @@ func (h fileHandler) serveMissing(w http.ResponseWriter, r *http.Request) {
 	h.notFound(w, r, files)
 }
 
-// serveFile serves the site file name, already open as f: its gzip variant
-// if there is one and the client accepts gzip, else f itself.
-func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string, f fs.File, info fs.FileInfo) {
-	w.Header().Set("Cache-Control", cacheControl(name))
-	gz, err := files.Open(name + service.GzipSuffix)
-	if err == nil {
-		defer gz.Close()
-		w.Header().Add("Vary", "Accept-Encoding")
-		// A Range is of the plain file's bytes, so a Range request gets the
-		// plain file.
-		if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Values("Accept-Encoding")) {
-			serveGzip(w, r, name, gz)
-			return
-		}
-	}
-	content, ok := f.(io.ReadSeeker)
-	if !ok {
-		serverError(w, "file isn't seekable")
-		return
-	}
-	http.ServeContent(w, r, info.Name(), time.Time{}, content)
-}
-
-// notFound answers with the site's 404 page and status 404: gzipped if
-// there's a variant and the client accepts gzip, like serveFile. If the site
-// has no 404 page, or it can't be read, the built-in one answers instead.
+// notFound answers with the site's 404 page and status 404, or, if the site
+// has no 404 page or it can't be read, the built-in one.
 func (h fileHandler) notFound(w http.ResponseWriter, r *http.Request, files fs.FS) {
 	w.Header().Set("Cache-Control", cacheShort)
-	gzName := notFoundFile + service.GzipSuffix
-	_, err := fs.Stat(files, gzName)
-	hasGzip := err == nil
-	if hasGzip && acceptsGzip(r.Header.Values("Accept-Encoding")) {
-		if gz, info, ok := openRegular(files, gzName); ok {
-			defer gz.Close()
-			w.Header().Add("Vary", "Accept-Encoding")
-			w.Header().Set("Content-Encoding", "gzip")
-			writeWhole(w, r, notFoundFile, gz, info.Size(), http.StatusNotFound)
-			return
-		}
-	}
-	f, info, ok := openRegular(files, notFoundFile)
-	if !ok {
+	if !sendFile(w, r, files, models.NotFoundFile, http.StatusNotFound) {
 		h.pages.serveNotFound(w, r)
-		return
+	}
+}
+
+// sendFile sends the site file name with status. If name has a gzip variant
+// (see service.WriteSite), every response says it varies by
+// Accept-Encoding, and the variant is sent, whole, to a client that accepts
+// gzip, unless the request has a Range (which is of the plain file's
+// bytes). Otherwise the plain file is sent; with status 200, through
+// [http.ServeContent], so Range requests work. sendFile writes nothing and
+// returns false if name isn't a regular file.
+func sendFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string, status int) bool {
+	f, info, ok := openRegular(files, name)
+	if !ok {
+		return false
 	}
 	defer f.Close()
-	if hasGzip {
-		w.Header().Add("Vary", "Accept-Encoding")
+	h := w.Header()
+	h.Set("Content-Type", contentType(name))
+
+	if gz, gzInfo, hasGzip := openRegular(files, name+models.GzipSuffix); hasGzip {
+		defer gz.Close()
+		h.Add("Vary", "Accept-Encoding")
+		if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Values("Accept-Encoding")) {
+			h.Set("Content-Encoding", "gzip")
+			writeWhole(w, r, gz, gzInfo.Size(), status)
+			return true
+		}
 	}
-	writeWhole(w, r, notFoundFile, f, info.Size(), http.StatusNotFound)
+	if content, seekable := f.(io.ReadSeeker); seekable && status == http.StatusOK {
+		http.ServeContent(w, r, info.Name(), time.Time{}, content)
+		return true
+	}
+	writeWhole(w, r, f, info.Size(), status)
+	return true
 }
 
 // openRegular opens the site file name if it's a regular file.
@@ -198,44 +175,12 @@ func openRegular(files fs.FS, name string) (fs.File, fs.FileInfo, bool) {
 	return f, info, true
 }
 
-// serveGzip serves gz, the gzip variant of the site file name, whole. It
-// doesn't support Range requests.
-func serveGzip(w http.ResponseWriter, r *http.Request, name string, gz fs.File) {
-	w.Header().Set("Content-Encoding", "gzip")
-	serveWhole(w, r, name, gz, http.StatusOK)
-}
-
-// serveWhole serves f, which holds the site file name's content (possibly
-// gzipped), whole and with the given status.
-func serveWhole(w http.ResponseWriter, r *http.Request, name string, f fs.File, status int) {
-	info, err := f.Stat()
-	if err != nil {
-		w.Header().Del("Content-Encoding")
-		serverError(w, "can't read the file")
-		return
-	}
-	writeWhole(w, r, name, f, info.Size(), status)
-}
-
-// writeWhole writes f, size bytes of the site file name's content (possibly
-// gzipped), with the given status.
-func writeWhole(w http.ResponseWriter, r *http.Request, name string, f io.Reader, size int64, status int) {
-	h := w.Header()
-	contentType := mime.TypeByExtension(path.Ext(name))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	h.Set("Content-Type", contentType)
-	h.Set("Content-Length", strconv.FormatInt(size, 10))
+// writeWhole writes the size bytes of f with status, after the headers set
+// so far. A HEAD request gets no body.
+func writeWhole(w http.ResponseWriter, r *http.Request, f io.Reader, size int64, status int) {
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, f)
 	}
-}
-
-// serverError responds with a 500 that nothing caches.
-func serverError(w http.ResponseWriter, text string) {
-	w.Header().Del("Vary")
-	w.Header().Set("Cache-Control", cacheNever)
-	http.Error(w, text, http.StatusInternalServerError)
 }
