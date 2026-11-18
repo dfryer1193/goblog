@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/dfryer1193/goblog/models"
@@ -90,12 +92,50 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	}
 	post.Draft = post.PublishDate.IsZero() || post.PublishDate.Compare(today) > 0
 
+	doc := md.Parser().Parse(text.NewReader(body))
+	if post.Summary == "" {
+		post.Summary = firstParagraph(doc, body)
+	}
 	var html bytes.Buffer
-	if err = md.Convert(body, &html); err != nil {
+	if err = md.Renderer().Render(&html, body, doc); err != nil {
 		return nil, fmt.Errorf("rendering Markdown: %w", err)
 	}
 	post.Body = template.HTML(html.String()) //nolint:gosec // goldmark escapes the author's text and drops raw HTML
 	return post, nil
+}
+
+// firstParagraph returns the plain text of the first paragraph in doc, with
+// its line breaks turned into spaces. It's "" if doc has no paragraph.
+func firstParagraph(doc ast.Node, src []byte) string {
+	var para ast.Node
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering && n.Kind() == ast.KindParagraph {
+			para = n
+			return ast.WalkStop, nil
+		}
+		return ast.WalkContinue, nil
+	})
+	if para == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	_ = ast.Walk(para, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := n.(type) {
+		case *ast.Text:
+			b.Write(n.Segment.Value(src))
+			if n.SoftLineBreak() || n.HardLineBreak() {
+				b.WriteByte(' ')
+			}
+		case *ast.String:
+			b.Write(n.Value)
+		}
+		return ast.WalkContinue, nil
+	})
+	return strings.TrimSpace(b.String())
 }
 
 // splitFrontMatter splits a Post into its YAML front matter, fenced by "---"

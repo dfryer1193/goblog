@@ -193,6 +193,29 @@ func TestInvalidFrontMatterSkipsThatPostAndTheRestStillRenders(t *testing.T) {
 	}
 }
 
+func TestIndexShowsTagsAndSummaries(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/summarised.md": "---\ntitle: Summarised\ndate: 2026-01-02\ntags: [k8s, talos]\n" +
+			"summary: The author's own blurb.\n---\n\nFirst paragraph that isn't the summary.\n",
+		"posts/fallback.md": "---\ntitle: Fallback\ndate: 2026-01-01\n---\n\n# A heading first\n\n" +
+			"The *first* paragraph,\nwrapped over [two lines](https://example.com).\n\nThe second paragraph.\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	index := page(t, site, "index.html")
+	assertContains(t, "index", index, "The author&#39;s own blurb.")
+	assertContains(t, "index", index, "The first paragraph, wrapped over two lines.")
+	assertInOrder(t, "index", index, ">Summarised<", "k8s", "talos", ">Fallback<")
+	if strings.Contains(index, "isn&#39;t the summary") || strings.Contains(index, "second paragraph") {
+		t.Errorf("index shows more than the summary:\n%s", index)
+	}
+
+	post := page(t, site, "posts/summarised/index.html")
+	assertInOrder(t, "post", post, "k8s", "talos")
+}
+
 func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 	repo := contentRepo(map[string]string{
 		"posts/picluster.md": "---\ntitle: Building a Pi cluster\ndate: 2026-01-05\n---\n\n" +

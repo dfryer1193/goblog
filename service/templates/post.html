@@ -2,6 +2,7 @@
 <article>
 <h1>{{.Post.Title}}</h1>
 <p><time datetime="{{.Post.PublishDate}}">{{.Post.PublishDate.Display}}</time></p>
+{{- template "tags" .Post.Tags}}
 {{.Post.Body}}
 </article>
 {{end}}

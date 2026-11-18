@@ -1,7 +1,13 @@
 {{define "content"}}
 <ul>
 {{- range .Posts}}
-<li><time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time> <a href="{{.URL}}">{{.Title}}</a></li>
+<li>
+<time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time> <a href="{{.URL}}">{{.Title}}</a>
+{{- template "tags" .Tags}}
+{{- if .Summary}}
+<p>{{.Summary}}</p>
+{{- end}}
+</li>
 {{- end}}
 </ul>
 {{end}}
