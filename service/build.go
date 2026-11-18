@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"io/fs"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dfryer1193/goblog/models"
@@ -35,6 +37,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 		return nil, err
 	}
 	listed := publishedPosts(posts)
+	slices.SortFunc(listed, newestFirst)
 
 	out, err := newOutput()
 	if err != nil {
@@ -61,4 +64,13 @@ func publishedPosts(posts []*models.Post) []*models.Post {
 		}
 	}
 	return listed
+}
+
+// newestFirst orders Posts by Publish Date, newest first, then by filename so
+// that the order never changes between builds.
+func newestFirst(a, b *models.Post) int {
+	if c := b.PublishDate.Compare(a.PublishDate); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Path, b.Path)
 }

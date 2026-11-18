@@ -57,6 +57,41 @@ func assertNoProblems(t *testing.T, site *models.Site) {
 	}
 }
 
+// assertInOrder checks that each of wants appears in text, in that order.
+func assertInOrder(t *testing.T, name, text string, wants ...string) {
+	t.Helper()
+	rest := text
+	for _, want := range wants {
+		i := strings.Index(rest, want)
+		if i < 0 {
+			t.Fatalf("%s does not contain %q after the earlier entries %v:\n%s", name, want, wants, text)
+		}
+		rest = rest[i+len(want):]
+	}
+}
+
+func TestIndexListsPostsByPublishDateNewestFirstWithTiesByFilename(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/old.md":     "---\ntitle: Old\ndate: 2025-12-31\n---\n",
+		"posts/b-same.md":  "---\ntitle: B same day\ndate: 2026-02-01\n---\n",
+		"posts/newest.md":  "---\ntitle: Newest\ndate: 2026-03-10\n---\n",
+		"posts/a-same.md":  "---\ntitle: A same day\ndate: 2026-02-01\n---\n",
+		"posts/middle.md":  "---\ntitle: Middle\ndate: 2026-02-14\n---\n",
+		"posts/c-same.md":  "---\ntitle: C same day\ndate: 2026-02-01\n---\n",
+		"posts/notes.txt":  "not a Post",
+		"drafts/ignore.md": "---\ntitle: Not in posts/\ndate: 2026-01-01\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	assertInOrder(t, "index", page(t, site, "index.html"),
+		">Newest<", ">Middle<", ">A same day<", ">B same day<", ">C same day<", ">Old<")
+	if strings.Contains(page(t, site, "index.html"), "Not in posts/") {
+		t.Error("index lists a Markdown file from outside posts/")
+	}
+}
+
 func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 	repo := contentRepo(map[string]string{
 		"posts/picluster.md": "---\ntitle: Building a Pi cluster\ndate: 2026-01-05\n---\n\n" +
