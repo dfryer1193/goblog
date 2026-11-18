@@ -34,6 +34,8 @@ type pageData struct {
 	Posts []*models.Post
 	// Post is the Post a Post page shows.
 	Post *models.Post
+	// Page is the Page a Page's page shows.
+	Page *models.Page
 }
 
 // output collects a build's output files.

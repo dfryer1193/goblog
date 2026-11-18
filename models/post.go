@@ -86,3 +86,21 @@ type Problem struct {
 func (p Problem) String() string {
 	return fmt.Sprintf("%s: %v", p.Path, p.Err)
 }
+
+// Page is one standalone Page from the Content Repository's pages/ folder,
+// such as About. It has no Publish Date and isn't listed with the Posts.
+type Page struct {
+	// Path is the Page's file in the Content Repository, e.g. pages/about.md.
+	Path string
+	// Name is the filename without .md; the Page lives at /<Name>/.
+	Name string
+	// Title is the required front-matter title.
+	Title string
+	// Body is the Page's rendered Markdown.
+	Body template.HTML
+}
+
+// URL is the Page's site path, e.g. /about/.
+func (p *Page) URL() string {
+	return "/" + p.Name + "/"
+}
