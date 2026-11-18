@@ -20,6 +20,9 @@ type BuildOptions struct {
 	// IncludeDrafts renders Drafts as well as Published Posts, marked as
 	// Drafts, for previewing.
 	IncludeDrafts bool
+	// Commit is the full hash of the Content Repository commit being
+	// rendered. Empty means unknown, e.g. a build from a local directory.
+	Commit string
 }
 
 // siteBuild is the state of one site build, shared by its steps.

@@ -1,5 +1,7 @@
-// Command goblog is an HTTP server, a Deployable. It serves mjolnir's
-// probes (/livez, /readyz and /startupz) and drains gracefully on SIGTERM.
+// Command goblog is an HTTP server, a Deployable. It clones the Content
+// Repository, renders the site and serves it, along with mjolnir's probes
+// (/livez, /readyz and /startupz), and drains gracefully on SIGTERM. See
+// package app for its environment variables.
 //
 // `goblog build -out dir [-content dir] [-drafts]` instead renders the site
 // once from a Content Repository checkout into dir, for previewing.
@@ -15,11 +17,8 @@ import (
 	"github.com/dfryer1193/mjolnir/router"
 	"github.com/dfryer1193/mjolnir/utils/log"
 
-	"github.com/dfryer1193/goblog/api"
+	"github.com/dfryer1193/goblog/app"
 )
-
-// defaultPort is the port goblog listens on when PORT isn't set.
-const defaultPort = "8080"
 
 // drainBudget is the whole shutdown budget: half with readiness at 503, half
 // for Shutdown. Keep it under the orchestrator's termination grace period.
@@ -36,39 +35,42 @@ func main() {
 	serve()
 }
 
-// serve is goblog's default mode: the HTTP server.
+// serve is goblog's default mode: the HTTP server, publishing the Content
+// Repository configured in the environment.
 func serve() {
+	// mjolnir's JSON log stream defaults to logs/ under the working
+	// directory, which may not be writable in the container image. goblog
+	// logs to stdout only, so send that stream nowhere.
+	if err := log.SetJSONFile(os.DevNull); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "goblog: disabling the JSON log:", err)
+	}
 	lg := log.GetLogger("goblog")
 
-	r, err := api.NewRouter(ready)
+	cfg, err := app.ConfigFromEnv(os.LookupEnv)
 	if err != nil {
-		lg.Error("Failed to build router", "error", err)
+		lg.Error("Invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	a, err := app.New(cfg)
+	if err != nil {
+		lg.Error("Failed to start", "error", err)
 		os.Exit(1)
 	}
 
-	addr := net.JoinHostPort("", port())
+	// Serve probes straight away; readiness turns true once the first sync
+	// has rendered the site.
+	go func() {
+		if syncErr := a.Sync(context.Background()); syncErr != nil {
+			lg.Error("First sync failed", "error", syncErr)
+		}
+	}()
+
+	r := a.Router()
+	addr := net.JoinHostPort("", cfg.Port)
 	lg.Info("Server starting", "addr", addr)
 	if err = r.Run(router.NewServer(addr, r), drainBudget); err != nil {
 		lg.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
 	lg.Info("Server stopped")
-}
-
-// ready reports whether goblog can serve traffic right now. It is
-// consulted on every /readyz request, so it must be cheap.
-//
-// The placeholder page needs nothing, so goblog is always ready for now.
-// Once goblog renders a site, this reports ready only after the first render
-// has been swapped in.
-func ready(context.Context) bool {
-	return true
-}
-
-// port is the port to listen on: PORT if set, otherwise defaultPort.
-func port() string {
-	if p := os.Getenv("PORT"); p != "" {
-		return p
-	}
-	return defaultPort
 }

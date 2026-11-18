@@ -5,9 +5,10 @@ repository, the Content Repository, and goblog publishes them with no manual
 publishing step.
 
 > **Status:** goblog is being rebuilt from scratch. Right now the server
-> serves a placeholder page and its health probes, and `goblog build` renders
-> Posts into plain, unstyled HTML. The previous implementation is kept under
-> the `legacy` tag for reference.
+> clones the Content Repository once at startup and serves its Posts, Pages
+> and tags as plain, unstyled HTML, and `goblog build` renders them the same
+> way locally. The previous implementation is kept under the `legacy` tag for
+> reference.
 
 ## How it works
 
@@ -49,7 +50,30 @@ specific to one blog lives in the Content Repository's `site.yaml` and in the
 deployment's environment, so you can run your own blog from a fork without
 code changes.
 
-The server listens on `$PORT` (default `8080`) and answers these probes:
+The server is configured from the environment:
+
+| Variable                 | Meaning                                                                             | Default                                    |
+| ------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------ |
+| `GOBLOG_CONTENT_URL`     | The Content Repository's URL: SSH (`git@github.com:you/blog-content.git`) or HTTPS  | required                                   |
+| `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
+| `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
+| `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys             | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
+| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
+| `PORT`                   | The port to listen on                                                               | `8080`                                     |
+
+The container image has no `known_hosts` file, so set `GOBLOG_SSH_KNOWN_HOSTS`
+when you use a deploy key.
+
+At startup goblog makes a shallow, single-branch clone of the Content
+Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
+renders the site into a fresh directory there and switches serving over to it.
+Until that first render, `/readyz` reports not ready. Unknown paths get a 404.
+
+goblog logs to stdout only. mjolnir's JSON log file (`logs/mjolnir.jsonl` by
+default) is turned off, because the image's working directory may not be
+writable.
+
+The server listens on `$PORT` and answers these probes:
 
 | Path        | Probe     |
 | ----------- | --------- |
@@ -69,8 +93,7 @@ Drafts, marked as such. Posts that can't be rendered, such as one with no
 `title`, are reported and skipped. The rest of the site is still written, but
 the command then exits with status 1.
 
-The rest of the runtime configuration (the Content Repository URL, branch,
-deploy key, webhook secret and poll interval) is still to be built.
+The webhook and the poll that keep the site up to date are still to be built.
 
 ## Development
 
