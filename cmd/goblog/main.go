@@ -1,9 +1,13 @@
 // Command goblog is an HTTP server, a Deployable. It serves mjolnir's
 // probes (/livez, /readyz and /startupz) and drains gracefully on SIGTERM.
+//
+// `goblog build -out dir [-content dir] [-drafts]` instead renders the site
+// once from a Content Repository checkout into dir, for previewing.
 package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"time"
@@ -22,6 +26,18 @@ const defaultPort = "8080"
 const drainBudget = 10 * time.Second
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "build" {
+		if err := runBuild(os.Args[2:], os.Stderr); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "goblog build:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	serve()
+}
+
+// serve is goblog's default mode: the HTTP server.
+func serve() {
 	lg := log.GetLogger("goblog")
 
 	r, err := api.NewRouter(ready)

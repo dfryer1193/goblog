@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}}{{else}}goblog{{end}}</title>
+</head>
+<body>
+<nav><a href="/">posts</a></nav>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{- define "tags"}}
+{{- if .}}
+<ul class="tags">
+{{- range .}}
+<li>#{{.}}</li>
+{{- end}}
+</ul>
+{{- end}}
+{{- end}}
+{{- define "date"}}
+{{- if not .PublishDate.IsZero}}<time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time>{{end}}
+{{- if .Draft}} <strong>draft</strong>{{end}}
+{{- end}}
