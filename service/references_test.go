@@ -44,12 +44,26 @@ func assertSkippedFor(t *testing.T, site *models.Site, name string, wants ...str
 
 func TestBrokenReferencesSkipThatPostAndTheRestStillRenders(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want string
+		name  string
+		body  string
+		wants []string
 	}{
-		{"link to a missing Post", "[gone](./gone.md)", `"./gone.md"`},
-		{"link to a missing Post with a fragment", "[gone](../posts/gone.md#top)", `"../posts/gone.md#top"`},
+		{"link to a missing Post", "[gone](./gone.md)", []string{`"./gone.md"`, "not found"}},
+		{
+			"link to a missing Post with a fragment",
+			"[gone](../posts/gone.md#top)",
+			[]string{`"../posts/gone.md#top"`, "not found"},
+		},
+		{
+			"link out of the Content Repository",
+			"[secret](../../secret.md)",
+			[]string{`"../../secret.md"`, "escapes the Content Repository"},
+		},
+		{
+			"link out and back in",
+			"[fine](../../repo/posts/fine.md)",
+			[]string{`"../../repo/posts/fine.md"`, "escapes the Content Repository"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,7 +74,7 @@ func TestBrokenReferencesSkipThatPostAndTheRestStillRenders(t *testing.T) {
 
 			site := build(t, repo, now, service.BuildOptions{})
 
-			assertSkippedFor(t, site, "posts/broken.md", tt.want, "not found")
+			assertSkippedFor(t, site, "posts/broken.md", tt.wants...)
 		})
 	}
 }

@@ -81,6 +81,9 @@ func (x *references) resolve(from, dest string) (string, error) {
 		return dest, nil
 	}
 	target := path.Join(path.Dir(from), u.Path)
+	if target == ".." || strings.HasPrefix(target, "../") {
+		return "", fmt.Errorf("link %q escapes the Content Repository", dest)
+	}
 	if path.Dir(target) == postsDir && path.Ext(target) == ".md" {
 		if !isFile(x.content, target) {
 			return "", fmt.Errorf("link %q: %s not found", dest, target)
