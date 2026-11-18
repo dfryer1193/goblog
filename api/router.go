@@ -71,15 +71,16 @@ type fileHandler struct {
 }
 
 func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Until the first render, every request gets the built-in "starting"
+	// page, whatever its method.
+	files := h.site.Files()
+	if files == nil {
+		h.pages.serveUnavailable(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-	files := h.site.Files()
-	if files == nil {
-		w.Header().Set("Cache-Control", cacheNever)
-		http.Error(w, "goblog hasn't rendered the site yet", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -16,6 +16,10 @@ import (
 //go:embed fallback.html
 var fallbackTemplate string
 
+// retryAfterSeconds is the Retry-After on the built-in 503: a render
+// usually takes a few seconds.
+const retryAfterSeconds = 10
+
 // fallbackPage is what varies between the built-in pages.
 type fallbackPage struct {
 	Title    string
@@ -77,6 +81,14 @@ func renderFallbackPages() (fallbackPages, error) {
 func (p fallbackPages) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", cacheShort)
 	serveFallback(w, r, http.StatusNotFound, p.notFound)
+}
+
+// serveUnavailable answers with the built-in 503 page, which nothing may
+// cache and which asks the client to retry shortly.
+func (p fallbackPages) serveUnavailable(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", cacheNever)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
+	serveFallback(w, r, http.StatusServiceUnavailable, p.unavailable)
 }
 
 // serveFallback writes a built-in page, uncompressed: it has no gzip

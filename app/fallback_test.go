@@ -121,3 +121,69 @@ func TestBuiltIn404IsSelfContained(t *testing.T) {
 
 	assertSelfContained(t, "the built-in 404", g.get(t, "/nope").body)
 }
+
+// assertStartingPage fails the test unless resp is the built-in "starting
+// up" 503 (with no body for HEAD).
+func assertStartingPage(t *testing.T, name string, resp response, head bool) {
+	t.Helper()
+	assertStatus(t, name, resp, http.StatusServiceUnavailable)
+	if got := resp.header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("%s Cache-Control = %q, want no-store", name, got)
+	}
+	if secs, err := strconv.Atoi(resp.header.Get("Retry-After")); err != nil || secs < 1 || secs > 60 {
+		t.Errorf("%s Retry-After = %q, want a few seconds", name, resp.header.Get("Retry-After"))
+	}
+	if got := resp.header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("%s Content-Type = %q, want HTML", name, got)
+	}
+	if head {
+		if resp.body != "" {
+			t.Errorf("%s has a body:\n%s", name, resp.body)
+		}
+		return
+	}
+	assertBuiltInPage(t, name, resp, "[starting]")
+	assertContains(t, name, resp.body, "being rendered")
+	assertSelfContained(t, name, resp.body)
+}
+
+func TestEveryRequestGetsTheStartingPageBeforeTheFirstRender(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		for _, path := range []string{"/", "/posts/hello/", "/nope", "/assets/style.css"} {
+			name := method + " " + path
+			resp := g.request(t, method, path, http.Header{"Accept-Encoding": {"gzip"}})
+			assertStartingPage(t, name, resp, method == http.MethodHead)
+		}
+	}
+
+	assertStatus(t, "/livez", g.get(t, "/livez"), http.StatusOK)
+	body := `{"ref":"refs/heads/trunk"}`
+	assertStatus(t, "/webhook", g.webhook(t, "ping", body, sign(webhookSecret, body)), http.StatusNoContent)
+}
+
+func TestAFailedFirstRenderKeepsTheStartingPageUntilASyncSucceeds(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{
+		"site.yaml":      "title: Test\ntimezone: Not/A_Timezone\n",
+		"posts/hello.md": post("Hello", "2026-03-01"),
+	})
+	g := startGoblog(t, repo, nil)
+
+	g.syncFails(t)
+
+	for _, path := range []string{"/", "/nope"} {
+		assertStartingPage(t, path+" after a failed render", g.get(t, path), false)
+	}
+
+	repo.commit(t, map[string]string{"site.yaml": "title: Test\n"})
+	g.sync(t)
+
+	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)
+	assertStatus(t, "/nope", g.get(t, "/nope"), http.StatusNotFound)
+}
