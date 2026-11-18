@@ -36,6 +36,16 @@ type pageData struct {
 	Post *models.Post
 	// Page is the Page a Page's page shows.
 	Page *models.Page
+	// Tags are the tags the tags page lists.
+	Tags []*models.Tag
+	// Tag is the tag a tag page shows; its Posts are also in Posts.
+	Tag *models.Tag
+}
+
+// templateFuncs are the functions every template can call.
+var templateFuncs = template.FuncMap{ //nolint:gochecknoglobals // fixed set
+	// tagURL is the site path of the tag with the given name.
+	"tagURL": models.TagURL,
 }
 
 // output collects a build's output files.
@@ -56,7 +66,8 @@ func newOutput(settings *models.SiteSettings) (*output, error) {
 		if name == layoutTemplate {
 			continue
 		}
-		t, perr := template.ParseFS(templateFS, layoutTemplate, name)
+		t, perr := template.New(path.Base(layoutTemplate)).Funcs(templateFuncs).
+			ParseFS(templateFS, layoutTemplate, name)
 		if perr != nil {
 			return nil, fmt.Errorf("parsing %s: %w", name, perr)
 		}

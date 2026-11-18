@@ -20,11 +20,12 @@ func TestPageRendersAtItsNameAndStaysOutOfTheIndexAndTags(t *testing.T) {
 	assertContains(t, "page", about, "<title>About me · Test blog</title>")
 	assertContains(t, "page", about, "<h1>About me</h1>")
 	assertContains(t, "page", about, "<em>things</em>")
-	for _, name := range []string{"index.html"} {
+	for _, name := range []string{"index.html", "tags/index.html"} {
 		if text := page(t, site, name); strings.Contains(text, "About me") || strings.Contains(text, "secret-tag") {
 			t.Errorf("%s shows the Page:\n%s", name, text)
 		}
 	}
+	assertNoFile(t, site, "tags/secret-tag/index.html")
 }
 
 func TestPagesThatCollideWithTheSitesOwnPathsOrAreInvalidAreProblems(t *testing.T) {

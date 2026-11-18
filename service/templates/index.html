@@ -1,13 +1,3 @@
 {{define "content"}}
-<ul>
-{{- range .Posts}}
-<li>
-{{template "date" .}} <a href="{{.URL}}">{{.Title}}</a>
-{{- template "tags" .Tags}}
-{{- if .Summary}}
-<p>{{.Summary}}</p>
-{{- end}}
-</li>
-{{- end}}
-</ul>
+{{template "postlist" .Posts}}
 {{end}}

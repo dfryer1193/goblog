@@ -23,7 +23,7 @@ const settingsFile = "site.yaml"
 func defaultSettings() models.SiteSettings {
 	return models.SiteSettings{
 		Title: "goblog",
-		Nav:   []models.NavLink{{Name: "posts", Link: "/"}, {Name: "tags", Link: "/tags/"}},
+		Nav:   []models.NavLink{{Name: "posts", Link: "/"}, {Name: tagsSection, Link: "/" + tagsSection + "/"}},
 	}
 }
 

@@ -49,6 +49,7 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 	renderIndex,
 	renderPostPages,
 	renderPages,
+	renderTags,
 }
 
 // Build renders the whole site from the Content Repository files in content,

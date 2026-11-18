@@ -94,7 +94,7 @@ func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, e
 // also works on case-insensitive filesystems.
 var reservedPaths = map[string]bool{ //nolint:gochecknoglobals // fixed set
 	// Rendered from the Content Repository.
-	"index.html": true, "posts": true, "tags": true, "images": true,
+	"index.html": true, "posts": true, tagsSection: true, "images": true,
 	"feed.xml": true, "sitemap.xml": true, "404.html": true,
 	// Room for the stylesheet, fonts and other static files.
 	"static": true, "assets": true, "css": true, "fonts": true, "js": true,

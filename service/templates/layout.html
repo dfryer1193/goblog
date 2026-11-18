@@ -27,7 +27,7 @@
 {{- if .}}
 <ul class="tags">
 {{- range .}}
-<li>#{{.}}</li>
+<li><a href="{{tagURL .}}">#{{.}}</a></li>
 {{- end}}
 </ul>
 {{- end}}
@@ -35,4 +35,17 @@
 {{- define "date"}}
 {{- if not .PublishDate.IsZero}}<time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time>{{end}}
 {{- if .Draft}} <strong>draft</strong>{{end}}
+{{- end}}
+{{- define "postlist"}}
+<ul>
+{{- range .}}
+<li>
+{{template "date" .}} <a href="{{.URL}}">{{.Title}}</a>
+{{- template "tags" .Tags}}
+{{- if .Summary}}
+<p>{{.Summary}}</p>
+{{- end}}
+</li>
+{{- end}}
+</ul>
 {{- end}}
