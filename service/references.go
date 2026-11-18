@@ -41,6 +41,8 @@ func newReferencing(from string) (parser.Context, *referencing) {
 // it through a parser.Context from newReferencing.
 type references struct {
 	content fs.FS
+	// images is the set of imageFiles in content, listed on first use.
+	images map[string]bool
 }
 
 // Extend adds the reference rewriting to m.
@@ -105,15 +107,33 @@ func (x *references) resolve(from, dest string, image bool) (string, error) {
 	default:
 		return "", fmt.Errorf("points at %s, which isn't on the site", target)
 	}
-	if !isFile(x.content, target) {
+	exists, err := x.exists(target)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
 		return "", fmt.Errorf("points at %s, which is not found", target)
 	}
 	return site.String(), nil
 }
 
-// isFile reports whether name is a regular file in content. A symlink isn't
-// one, so a reference can't reach outside the Content Repository through it.
-func isFile(content fs.FS, name string) bool {
-	info, err := fs.Lstat(content, name)
-	return err == nil && info.Mode().IsRegular()
+// exists reports whether a reference can point at name: an image in
+// images/, or another regular file. A symlink isn't one, so a reference can't
+// reach outside the Content Repository through it.
+func (x *references) exists(name string) (bool, error) {
+	if !strings.HasPrefix(name, imagesDir+"/") {
+		info, err := fs.Lstat(x.content, name)
+		return err == nil && info.Mode().IsRegular(), nil
+	}
+	if x.images == nil {
+		names, err := imageFiles(x.content)
+		if err != nil {
+			return false, err
+		}
+		x.images = make(map[string]bool, len(names))
+		for _, n := range names {
+			x.images[n] = true
+		}
+	}
+	return x.images[name], nil
 }

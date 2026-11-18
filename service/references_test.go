@@ -1,9 +1,11 @@
 package service_test
 
 import (
+	"io/fs"
 	"path"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/dfryer1193/goblog/models"
 	"github.com/dfryer1193/goblog/service"
@@ -167,4 +169,50 @@ func TestUnreferencedImagesAreCopiedToo(t *testing.T) {
 		t.Errorf("images/og/card.png = %q, want it copied unchanged", got)
 	}
 	assertNoFile(t, site, "notes/private.png")
+}
+
+func TestSymlinksCannotReachOutsideTheContentRepository(t *testing.T) {
+	symlink := func(target string) *fstest.MapFile {
+		return &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte(target)}
+	}
+	repo := contentRepo(map[string]string{
+		"posts/fine.md":  "---\ntitle: Fine\ndate: 2026-01-01\n---\n",
+		"outside/key":    "secret",
+		"outside/me.png": "secret picture",
+	})
+	repo["images/key.png"] = symlink("../outside/key")
+	repo["images/linked"] = symlink("../outside")
+
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{"symlinked image", "../images/key.png"},
+		{"image in a symlinked folder", "../images/linked/me.png"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo["posts/broken.md"] = &fstest.MapFile{
+				Data: []byte("---\ntitle: Broken\ndate: 2026-01-02\n---\n\n![x](" + tt.ref + ")\n"),
+			}
+
+			site := build(t, repo, now, service.BuildOptions{})
+
+			assertSkippedFor(t, site, "posts/broken.md", `"`+tt.ref+`"`, "not found")
+			for _, name := range site.Paths() {
+				if data := string(site.Files[name]); strings.Contains(data, "secret") {
+					t.Errorf("output %s has a file from outside images/: %q", name, data)
+				}
+			}
+		})
+	}
+}
+
+func TestASymlinkedImagesFolderIsNotCopied(t *testing.T) {
+	repo := contentRepo(map[string]string{"outside/me.png": "secret picture"})
+	repo["images"] = &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("outside")}
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoFile(t, site, "images/me.png")
 }
