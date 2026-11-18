@@ -3,9 +3,8 @@ package service
 import (
 	"cmp"
 	"encoding/xml"
+	"fmt"
 	"net/url"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/dfryer1193/goblog/models"
@@ -83,6 +82,10 @@ func renderFeed(b *siteBuild) error {
 		Updated: b.now.In(b.tz).Format(time.RFC3339),
 	}
 	for _, p := range publishedPosts(b.posts) {
+		content, err := b.feedContent(p)
+		if err != nil {
+			return err
+		}
 		updated := b.publishTime(p.PublishDate)
 		if len(f.Entries) == 0 {
 			f.Updated = updated
@@ -94,7 +97,7 @@ func renderFeed(b *siteBuild) error {
 			Updated:   updated,
 			Links:     []atomLink{{Rel: "alternate", Type: "text/html", Href: b.absURL(p.URL())}},
 			Summary:   p.Summary,
-			Content:   atomText{Type: "html", Text: b.absoluteLinks(string(p.Body))},
+			Content:   atomText{Type: "html", Text: content},
 		}
 		for _, tag := range p.Tags {
 			e.Categories = append(e.Categories, atomCategory{Term: tag})
@@ -124,19 +127,16 @@ func (b *siteBuild) absURL(p string) string {
 	return b.settings.URL + (&url.URL{Path: p}).EscapedPath()
 }
 
-// siteRelativeAttr matches an href or src attribute holding a site-absolute
-// path such as /posts/x/ (but not a //host URL) in a rendered Post. Goldmark
-// writes every attribute in double quotes and escapes quotes in text, and it
-// drops raw HTML, so this only ever matches the attributes it wrote.
-var siteRelativeAttr = regexp.MustCompile(`\s(?:href|src)="/(?:[^/"][^"]*)?"`)
-
-// absoluteLinks rewrites the site-absolute links and images in a rendered
-// Post's HTML to absolute URLs, so that they work in a feed reader. Links to
-// other sites, fragments and the like are left alone. The paths are already
-// escaped.
-func (b *siteBuild) absoluteLinks(html string) string {
-	return siteRelativeAttr.ReplaceAllStringFunc(html, func(attr string) string {
-		i := strings.IndexByte(attr, '"') + 1
-		return attr[:i] + b.settings.URL + attr[i:]
-	})
+// feedContent renders the Post p's Markdown for the feed: like its Body, but
+// with its site-absolute links and images made absolute under the base URL,
+// so that they work in a feed reader.
+func (b *siteBuild) feedContent(p *models.Post) (string, error) {
+	d := b.docs[p.Path]
+	restore := absoluteDestinations(d.doc, b.settings.URL)
+	defer restore()
+	html, err := d.render(b.md)
+	if err != nil {
+		return "", fmt.Errorf("rendering %s for the feed: %w", p.Path, err)
+	}
+	return string(html), nil
 }

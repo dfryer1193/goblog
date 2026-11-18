@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -86,19 +87,11 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		var (
-			dest *[]byte
-			kind referenceKind
-		)
-		link, isLink := n.(*ast.Link)
-		switch n := n.(type) {
-		case *ast.Link:
-			dest, kind = &n.Destination, linkReference
-		case *ast.Image:
-			dest, kind = &n.Destination, imageReference
-		default:
+		dest, kind, isReference := destination(n)
+		if !isReference {
 			return ast.WalkContinue, nil
 		}
+		link, isLink := n.(*ast.Link)
 		written := string(*dest)
 		resolved, target, err := x.resolve(r.from, written, kind)
 		if err != nil {
@@ -111,6 +104,47 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 		}
 		return ast.WalkContinue, nil
 	})
+}
+
+// destination returns n's destination and its kind if n is a link or an
+// image.
+func destination(n ast.Node) (*[]byte, referenceKind, bool) {
+	switch n := n.(type) {
+	case *ast.Link:
+		return &n.Destination, linkReference, true
+	case *ast.Image:
+		return &n.Destination, imageReference, true
+	}
+	return nil, 0, false
+}
+
+// absoluteDestinations prefixes every site-absolute link and image
+// destination in doc, such as the /posts/x/ that Transform resolved a
+// relative link to, with the base URL base. Other destinations, such as
+// //host/x or https://..., are left alone. It returns a function that puts
+// the destinations back.
+func absoluteDestinations(doc ast.Node, base string) func() {
+	type change struct {
+		dest *[]byte
+		was  []byte
+	}
+	var changes []change
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		dest, _, ok := destination(n)
+		if ok && bytes.HasPrefix(*dest, []byte("/")) && !bytes.HasPrefix(*dest, []byte("//")) {
+			changes = append(changes, change{dest: dest, was: *dest})
+			*dest = append([]byte(base), *dest...)
+		}
+		return ast.WalkContinue, nil
+	})
+	return func() {
+		for _, c := range changes {
+			*c.dest = c.was
+		}
+	}
 }
 
 // referenceKind is what kind of reference a destination belongs to.
