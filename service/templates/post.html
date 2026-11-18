@@ -1,0 +1,7 @@
+{{define "content"}}
+<article>
+<h1>{{.Post.Title}}</h1>
+<p><time datetime="{{.Post.PublishDate}}">{{.Post.PublishDate.Display}}</time></p>
+{{.Post.Body}}
+</article>
+{{end}}

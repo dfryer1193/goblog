@@ -1,0 +1,7 @@
+{{define "content"}}
+<ul>
+{{- range .Posts}}
+<li><time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time> <a href="{{.URL}}">{{.Title}}</a></li>
+{{- end}}
+</ul>
+{{end}}
