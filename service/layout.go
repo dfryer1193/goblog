@@ -125,7 +125,8 @@ const defaultHost = "goblog"
 // buildInfo is what the status bar and the info line say about the build.
 type buildInfo struct {
 	// Date and Time are the render time in the site's timezone, as
-	// YYYY.MM.DD and HH:MM.
+	// YYYY.MM.DD and as HH:MM with the zone's abbreviation at that time,
+	// e.g. "11:00 EDT".
 	Date, Time string
 	// Host is the first DNS label of the site's URL, e.g. "blog" for
 	// https://blog.example.com, or "goblog" if it has none.
@@ -148,7 +149,7 @@ func newBuildInfo(now time.Time, tz *time.Location, siteURL, commit string) buil
 	local := now.In(tz)
 	return buildInfo{
 		Date:   local.Format("2006.01.02"),
-		Time:   local.Format("15:04"),
+		Time:   local.Format("15:04 MST"),
 		Host:   host,
 		Commit: commit[:min(len(commit), shortCommitLen)],
 	}

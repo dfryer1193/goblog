@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/dfryer1193/goblog/models"
 	"github.com/dfryer1193/goblog/service"
@@ -200,12 +201,22 @@ func TestStatusBarShowsTheSessionThenWindowsThenBuildDateTimeAndHost(t *testing.
 	site := build(t, designRepo(), now, service.BuildOptions{})
 
 	bar := between(t, page(t, site, "index.html"), `<header class="tbar">`, "</header>")
-	// 15:00 UTC is 11:00 in site.yaml's America/New_York; the host is the
-	// first label of the site's URL.
+	// 15:00 UTC is 11:00 in site.yaml's America/New_York, on daylight
+	// saving time since 2026-03-08; the host is the first label of the
+	// site's URL.
 	assertInOrder(t, "status bar", bar,
 		`<details class="ham"><summary aria-label="files">☰</summary>`, "</details>",
 		`[Werewolf Notes]`, sep, windowsTag, "</nav>",
-		`<span class="right">`+sep+"2026.03.10"+sep+"11:00"+sep+"blog"+sep+"</span>")
+		`<span class="right">`+sep+"2026.03.10"+sep+"11:00 EDT"+sep+"blog"+sep+"</span>")
+}
+
+func TestStatusBarTimeHasTheTimezoneAbbreviationForTheRenderTime(t *testing.T) {
+	winter := time.Date(2026, time.January, 20, 23, 30, 0, 0, time.UTC)
+
+	site := build(t, designRepo(), winter, service.BuildOptions{})
+
+	assertContains(t, "status bar", page(t, site, "index.html"),
+		`<span class="right">`+sep+"2026.01.20"+sep+"18:30 EST"+sep+"blog"+sep+"</span>")
 }
 
 func TestStatusBarHostIsGoblogWithoutSiteSettings(t *testing.T) {
@@ -214,7 +225,7 @@ func TestStatusBarHostIsGoblogWithoutSiteSettings(t *testing.T) {
 	site := build(t, repo, now, service.BuildOptions{})
 
 	assertContains(t, "status bar", page(t, site, "index.html"),
-		`<span class="right">`+sep+"2026.03.10"+sep+"15:00"+sep+"goblog"+sep+"</span>")
+		`<span class="right">`+sep+"2026.03.10"+sep+"15:00 UTC"+sep+"goblog"+sep+"</span>")
 }
 
 func TestEveryFileUnderAssetsAndFontsHasAContentHashInItsName(t *testing.T) {
