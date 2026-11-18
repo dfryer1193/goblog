@@ -8,9 +8,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/dfryer1193/mjolnir/health"
 	"github.com/dfryer1193/mjolnir/router"
 	"github.com/dfryer1193/mjolnir/utils/log"
+
+	"github.com/dfryer1193/goblog/api"
 )
 
 // defaultPort is the port goblog listens on when PORT isn't set.
@@ -23,19 +24,11 @@ const drainBudget = 10 * time.Second
 func main() {
 	lg := log.GetLogger("goblog")
 
-	r, err := router.New(router.Config{
-		Health: health.Config{
-			Started: health.AlwaysStarted,
-			Ready:   ready,
-		},
-	})
+	r, err := api.NewRouter(ready)
 	if err != nil {
 		lg.Error("Failed to build router", "error", err)
 		os.Exit(1)
 	}
-
-	// TODO: register goblog's routes on r. Put the handlers in
-	// github.com/dfryer1193/goblog/api, and have them call github.com/dfryer1193/goblog/service.
 
 	addr := net.JoinHostPort("", port())
 	lg.Info("Server starting", "addr", addr)
@@ -49,10 +42,11 @@ func main() {
 // ready reports whether goblog can serve traffic right now. It is
 // consulted on every /readyz request, so it must be cheap.
 //
-// TODO: check goblog's dependencies (databases, downstream services).
-// Until then it reports not-ready, so /readyz answers 503.
+// The placeholder page needs nothing, so goblog is always ready for now.
+// Once goblog renders a site, this reports ready only after the first render
+// has been swapped in.
 func ready(context.Context) bool {
-	return false
+	return true
 }
 
 // port is the port to listen on: PORT if set, otherwise defaultPort.

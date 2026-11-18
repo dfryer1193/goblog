@@ -26,3 +26,7 @@ go.work.sum
 .env
 /bin/
 /logs/
+
+# mjolnir writes logs/mjolnir.jsonl relative to the working directory, so
+# tests leave one in each package directory.
+logs/
