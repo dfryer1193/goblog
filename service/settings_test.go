@@ -45,6 +45,8 @@ func TestMissingSiteSettingsIsAProblemButTheSiteBuildsWithDefaults(t *testing.T)
 	if len(site.Problems) != 1 || !strings.HasPrefix(site.Problems[0].String(), "site.yaml: missing") {
 		t.Fatalf("got problems %v, want one saying site.yaml is missing", site.Problems)
 	}
+	assertNoFile(t, site, "feed.xml")
+	assertNoFile(t, site, "sitemap.xml")
 	index := page(t, site, "index.html")
 	assertContains(t, "index", index, "<title>goblog</title>")
 	assertInOrder(t, "index", index, `<a href="/">posts</a>`, `<a href="/tags/">tags</a>`, ">X<")
