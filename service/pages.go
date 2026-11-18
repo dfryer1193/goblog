@@ -1,31 +1,20 @@
 package service
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"path"
 	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/dfryer1193/goblog/models"
 )
 
 // pagesDir is the Content Repository folder holding Pages.
 const pagesDir = "pages"
-
-// pageFrontMatter is a Page's YAML front matter as the author wrote it.
-// Pages need only a title; other fields are ignored.
-type pageFrontMatter struct {
-	Title string `yaml:"title"`
-}
 
 // readPages reads and renders each Page in the Content Repository's pages/
 // folder, sorted by name. Pages it can't use come back as Problems.
@@ -69,43 +58,27 @@ func renderPages(b *siteBuild) error {
 	return nil
 }
 
-// readPage reads, validates and renders the Page at name.
+// readPage reads, validates and renders the Page at name. A Page's front
+// matter needs only a title; other fields are ignored.
 func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, error) {
 	pageName := fileStem(name)
 	if err := checkPageName(pageName); err != nil {
 		return nil, err
 	}
-	src, err := fs.ReadFile(content, name)
-	if err != nil {
-		return nil, fmt.Errorf("reading: %w", err)
-	}
-	fm, body, err := splitFrontMatter(src)
+	var meta titleFrontMatter
+	body, err := readFrontMatter(content, name, &meta)
 	if err != nil {
 		return nil, err
 	}
-	var meta pageFrontMatter
-	if err = yaml.Unmarshal(fm, &meta); err != nil {
-		return nil, fmt.Errorf("invalid front matter: %w", err)
-	}
-	title := strings.TrimSpace(meta.Title)
-	if title == "" {
-		return nil, errors.New("front matter has no title")
-	}
-	pc, refs := newReferencing(name)
-	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
-	if err = refs.err(); err != nil {
+	d, err := parseMarkdown(md, name, body)
+	if err != nil {
 		return nil, err
 	}
-	var html bytes.Buffer
-	if err = md.Renderer().Render(&html, body, doc); err != nil {
-		return nil, fmt.Errorf("rendering Markdown: %w", err)
+	page := &models.Page{Path: name, Name: pageName, Title: meta.Title}
+	if page.Body, err = d.render(md); err != nil {
+		return nil, err
 	}
-	return &models.Page{
-		Path:  name,
-		Name:  pageName,
-		Title: title,
-		Body:  template.HTML(html.String()), //nolint:gosec // goldmark escapes the author's text and drops raw HTML
-	}, nil
+	return page, nil
 }
 
 // reservedPaths are the top-level site paths that goblog itself uses, so no
