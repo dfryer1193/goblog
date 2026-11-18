@@ -155,3 +155,21 @@ func TestFeedContentLinksAndImagesAreAbsolute(t *testing.T) {
 		assertContains(t, "X's feed content", content, want)
 	}
 }
+
+func TestEveryPageLinksToTheFeedForAutodiscovery(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/x.md":     "---\ntitle: X\ndate: 2026-01-01\ntags: [t]\n---\n",
+		"pages/about.md": "---\ntitle: About\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	const want = `<link rel="alternate" type="application/atom+xml" title="Test blog" ` +
+		`href="https://blog.example.com/feed.xml">`
+	for _, name := range []string{
+		"index.html", "posts/x/index.html", "about/index.html", "tags/index.html", "tags/t/index.html",
+	} {
+		assertContains(t, name, page(t, site, name), want)
+	}
+}
