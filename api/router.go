@@ -53,8 +53,8 @@ func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.Handle(WebhookPath, webhookHandler{hook: hook})
 	files := fileHandler{site: site, pages: pages}
+	r.Handle(WebhookPath, webhookHandler{hook: hook, files: files})
 	r.Handle("/*", files)
 	return r, nil
 }
@@ -118,6 +118,17 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveFile(w, r, files, name, f, info)
+}
+
+// serveMissing answers a request for a path the site doesn't have: the
+// site's 404 page, or the built-in "starting" page before the first render.
+func (h fileHandler) serveMissing(w http.ResponseWriter, r *http.Request) {
+	files := h.site.Files()
+	if files == nil {
+		h.pages.serveUnavailable(w, r)
+		return
+	}
+	h.notFound(w, r, files)
 }
 
 // serveFile serves the site file name, already open as f: its gzip variant

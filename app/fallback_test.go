@@ -187,3 +187,47 @@ func TestAFailedFirstRenderKeepsTheStartingPageUntilASyncSucceeds(t *testing.T) 
 	assertStatus(t, "/posts/hello/", g.get(t, "/posts/hello/"), http.StatusOK)
 	assertStatus(t, "/nope", g.get(t, "/nope"), http.StatusNotFound)
 }
+
+// scanPaths are requests that may hit any of goblog's 404 and 503 paths.
+var scanPaths = []string{ //nolint:gochecknoglobals // test table
+	"/", "/nope", "/posts", "/posts/", "/posts/gone/", "/404.html", "/images/missing.png", "/assets/nope.css",
+	"/webhook", "/webhook/", "/webhook/x", "/livez/x", "/readyz/", "/startupz/x", "//", "/%2e%2e/etc/passwd",
+}
+
+// assertNoPlainGoErrors fails the test if any 404 or 503 response to
+// scanPaths, by any method, is one of Go's plain-text error bodies rather
+// than an HTML page.
+func assertNoPlainGoErrors(t *testing.T, g *goblog, state string) {
+	t.Helper()
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		for _, path := range scanPaths {
+			resp := g.request(t, method, path, nil)
+			if resp.status != http.StatusNotFound && resp.status != http.StatusServiceUnavailable {
+				continue
+			}
+			name := state + ": " + method + " " + path
+			contentType := resp.header.Get("Content-Type")
+			if strings.Contains(resp.body, "404 page not found") || strings.HasPrefix(contentType, "text/plain") {
+				t.Errorf("%s got Go's plain text (%d, %q):\n%s", name, resp.status, contentType, resp.body)
+			}
+			if got := resp.header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+				t.Errorf("%s Content-Type = %q, want HTML", name, got)
+			}
+		}
+	}
+}
+
+func TestGoPlainTextErrorsNeverReachAClient(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+
+	for _, env := range []map[string]string{nil, {"GOBLOG_WEBHOOK_SECRET": ""}} {
+		g := startGoblog(t, repo, env)
+		assertNoPlainGoErrors(t, g, "before the first render")
+		g.sync(t)
+		assertNoPlainGoErrors(t, g, "rendered")
+		g.removeSite404(t)
+		assertNoPlainGoErrors(t, g, "rendered without a 404 page")
+	}
+}
