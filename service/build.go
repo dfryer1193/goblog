@@ -21,6 +21,32 @@ type BuildOptions struct {
 	IncludeDrafts bool
 }
 
+// siteBuild is the state of one site build, shared by its steps.
+type siteBuild struct {
+	// content is the Content Repository.
+	content fs.FS
+	// now is the time of the build.
+	now  time.Time
+	opts BuildOptions
+	// today is now's date in the build's timezone.
+	today models.Date
+	// posts are the Posts the site shows, newest first: the Published
+	// Posts, plus the Drafts if the build includes them.
+	posts []*models.Post
+	// out collects the output files.
+	out *output
+	// problems are the files the build skipped so far.
+	problems []models.Problem
+}
+
+// buildSteps render the site's output, in order, once the Posts are read.
+// Each adds output files with b.out.page (or to b.out.files directly) and may
+// report Problems.
+var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed list of steps
+	renderIndex,
+	renderPostPages,
+}
+
 // Build renders the whole site from the Content Repository files in content,
 // as of now.
 //
@@ -33,29 +59,41 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	if tz == nil {
 		tz = time.UTC
 	}
-	today := models.DateOf(now.In(tz))
-
-	posts, problems, err := readPosts(content, today)
-	if err != nil {
-		return nil, err
-	}
-	listed := listedPosts(posts, opts.IncludeDrafts)
-	slices.SortFunc(listed, newestFirst)
-
 	out, err := newOutput()
 	if err != nil {
 		return nil, err
 	}
-	if err = out.page("index.html", "index", pageData{Posts: listed}); err != nil {
+	b := &siteBuild{content: content, now: now, opts: opts, today: models.DateOf(now.In(tz)), out: out}
+
+	posts, problems, err := readPosts(content, b.today)
+	if err != nil {
 		return nil, err
 	}
-	for _, p := range listed {
-		if err = out.page("posts/"+p.Slug+"/index.html", "post", pageData{Title: p.Title, Post: p}); err != nil {
-			return nil, fmt.Errorf("rendering %s: %w", p.Path, err)
+	b.problems = problems
+	b.posts = listedPosts(posts, opts.IncludeDrafts)
+	slices.SortFunc(b.posts, newestFirst)
+
+	for _, step := range buildSteps {
+		if err = step(b); err != nil {
+			return nil, err
 		}
 	}
+	return &models.Site{Files: b.out.files, Problems: b.problems}, nil
+}
 
-	return &models.Site{Files: out.files, Problems: problems}, nil
+// renderIndex renders the index: every listed Post, newest first.
+func renderIndex(b *siteBuild) error {
+	return b.out.page("index.html", "index", pageData{Posts: b.posts})
+}
+
+// renderPostPages renders one page per listed Post, at /posts/<slug>/.
+func renderPostPages(b *siteBuild) error {
+	for _, p := range b.posts {
+		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{Title: p.Title, Post: p}); err != nil {
+			return fmt.Errorf("rendering %s: %w", p.Path, err)
+		}
+	}
+	return nil
 }
 
 // listedPosts returns the posts that the site shows: the Published Posts,
