@@ -39,7 +39,7 @@ func renderPages(b *siteBuild) error {
 
 	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
 	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".md" {
+		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(pagesDir, e.Name())
@@ -57,7 +57,7 @@ func renderPages(b *siteBuild) error {
 
 // readPage reads, validates and renders the Page at name.
 func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, error) {
-	pageName := strings.TrimSuffix(path.Base(name), ".md")
+	pageName := strings.TrimSuffix(path.Base(name), markdownExt)
 	if err := checkPageName(pageName); err != nil {
 		return nil, err
 	}

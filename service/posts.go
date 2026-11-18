@@ -13,6 +13,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
 
@@ -21,6 +22,9 @@ import (
 
 // postsDir is the Content Repository folder holding Posts.
 const postsDir = "posts"
+
+// markdownExt is the extension of Post and Page files.
+const markdownExt = ".md"
 
 // frontMatter is a Post's YAML front matter as the author wrote it.
 type frontMatter struct {
@@ -41,13 +45,13 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 		return nil, nil, fmt.Errorf("reading %s: %w", postsDir, err)
 	}
 
-	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	md := goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}))
 	var (
 		posts    []*models.Post
 		problems []models.Problem
 	)
 	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".md" {
+		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(postsDir, e.Name())
@@ -86,7 +90,7 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	}
 	post := &models.Post{
 		Path:    name,
-		Slug:    strings.TrimSuffix(path.Base(name), ".md"),
+		Slug:    strings.TrimSuffix(path.Base(name), markdownExt),
 		Title:   title,
 		Tags:    tags,
 		Summary: meta.Summary,
@@ -96,7 +100,11 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	}
 	post.Draft = post.PublishDate.IsZero() || post.PublishDate.Compare(today) > 0
 
-	doc := md.Parser().Parse(text.NewReader(body))
+	pc, refs := newReferencing(name)
+	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
+	if err = refs.err(); err != nil {
+		return nil, err
+	}
 	if post.Summary == "" {
 		post.Summary = firstParagraph(doc, body)
 	}
