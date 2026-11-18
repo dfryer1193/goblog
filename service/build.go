@@ -35,6 +35,8 @@ type siteBuild struct {
 	opts BuildOptions
 	// settings are the site settings from site.yaml.
 	settings models.SiteSettings
+	// tz is the build's timezone, which decides when Publish Dates arrive.
+	tz *time.Location
 	// today is now's date in the build's timezone.
 	today models.Date
 	// posts are the Posts the site shows, newest first: the Published
@@ -54,6 +56,7 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 	renderPostPages,
 	renderPages,
 	renderTags,
+	renderFeed,
 	copyImages,
 }
 
@@ -76,7 +79,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	}
 	b := &siteBuild{
 		content: content, now: now, opts: opts, settings: settings,
-		today: models.DateOf(now.In(tz)), out: out,
+		tz: tz, today: models.DateOf(now.In(tz)), out: out,
 	}
 	switch {
 	case problem != nil:
