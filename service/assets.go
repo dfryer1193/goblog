@@ -18,7 +18,8 @@ import (
 const staticDir = "static"
 
 // stylesheetSource is the stylesheet template in staticFS. {{asset "x"}} in
-// it is the site path of staticFS's static/x. It's served under /assets/.
+// it is the site path of staticFS's static/x, and {{palette}} is
+// PaletteCSS. It's served under /assets/.
 const stylesheetSource = "static/style.css"
 
 // assetsSection is the site section holding the stylesheet.
@@ -81,6 +82,7 @@ func makeAssets() (*assets, error) {
 		return nil, fmt.Errorf("reading %s: %w", stylesheetSource, err)
 	}
 	tmpl, err := template.New(stylesheetSource).Option("missingkey=error").Funcs(template.FuncMap{
+		"palette": PaletteCSS,
 		"asset": func(name string) (string, error) {
 			p, ok := paths[name]
 			if !ok {

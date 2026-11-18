@@ -1,5 +1,5 @@
-/* goblog's tmux design. Colours are the author's alacritty palette; the status
-   bar follows their .tmux.conf. JetBrains Mono is licensed under the SIL Open
+/* goblog's tmux design. Colours are the palette from service/palette.go; the status
+   bar follows the author's .tmux.conf. JetBrains Mono is licensed under the SIL Open
    Font License 1.1: {{asset "licenses/JetBrainsMono-OFL.txt"}} */
 
 @font-face {
@@ -24,24 +24,8 @@
   src: url("{{asset "fonts/JetBrainsMono-Italic.woff2"}}") format("woff2");
 }
 
+{{palette}}
 :root {
-  --bg: #222222;
-  --fg: #dddddd;
-  --dim: #666666;
-  --red: #e84f4f;
-  --green: #b7ce42;
-  --yellow: #fea63c;
-  --blue: #66aabb;
-  --magenta: #b7416e;
-  --cyan: #6d878d;
-  --bright-yellow: #ffe863;
-  --code-bg: #1b1b1b;
-  --rule: #333333;
-  --pane-border: #444444;
-  /* tmux status bar: status-bg, colour008 and colour245. */
-  --bar-bg: #3a3a3a;
-  --colour008: #666666;
-  --colour245: #8a8a8a;
   --bar-h: 2.6rem;
   --font: "JetBrains Mono", ui-monospace, monospace;
 }

@@ -56,6 +56,32 @@ func TestUnknownPathsGetTheBuiltIn404WhenTheSiteHasNone(t *testing.T) {
 	}
 }
 
+func TestBuiltInPagesUseTheSitesPalette(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	starting := g.get(t, "/")
+	g.sync(t)
+	css := regexp.MustCompile(`<link rel="stylesheet" href="(/assets/[^"]+)">`).FindStringSubmatch(g.get(t, "/").body)
+	if css == nil {
+		t.Fatal("index links no stylesheet")
+	}
+	stylesheet := g.get(t, css[1]).body
+	g.removeSite404(t)
+	notFound := g.get(t, "/nope")
+
+	// The spec's palette, as CSS custom properties.
+	for _, colour := range []string{
+		"--bg: #222222;", "--fg: #dddddd;", "--dim: #666666;", "--red: #e84f4f;", "--yellow: #fea63c;",
+		"--blue: #66aabb;", "--bar-bg: #3a3a3a;", "--colour008: #666666;",
+	} {
+		assertContains(t, "the stylesheet", stylesheet, colour)
+		assertContains(t, "the built-in 404", notFound.body, colour)
+		assertContains(t, "the built-in 503", starting.body, colour)
+	}
+}
+
 func TestBuiltIn404UnderHEADAndGzip(t *testing.T) {
 	t.Parallel()
 	repo := newContentRepo(t)

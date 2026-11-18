@@ -10,21 +10,6 @@ import (
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
 )
 
-// Palette colours from the author's alacritty.toml, as the code highlighting
-// uses them.
-const (
-	paletteFG          = "#dddddd"
-	paletteDim         = "#666666"
-	paletteRed         = "#e84f4f"
-	paletteGreen       = "#b7ce42"
-	paletteYellow      = "#fea63c"
-	paletteBlue        = "#66aabb"
-	paletteMagenta     = "#b7416e"
-	paletteCyan        = "#6d878d"
-	paletteBrightGreen = "#bde077"
-	codeBackground     = "#1b1b1b"
-)
-
 // codeStyle maps chroma's token types onto the palette. Code blocks are
 // rendered with CSS classes, so this only decides the stylesheet's rules.
 func codeStyle() (*chroma.Style, error) {
@@ -32,32 +17,32 @@ func codeStyle() (*chroma.Style, error) {
 	// from Comment.
 	//exhaustive:ignore
 	style, err := chroma.NewStyle("goblog", chroma.StyleEntries{
-		chroma.Background:        "bg:" + codeBackground + " " + paletteFG,
-		chroma.Error:             paletteRed,
-		chroma.Comment:           "italic " + paletteDim,
-		chroma.CommentPreproc:    "noitalic " + paletteCyan,
-		chroma.Keyword:           paletteMagenta,
-		chroma.KeywordType:       paletteBlue,
-		chroma.Name:              paletteFG,
-		chroma.NameTag:           paletteBlue,
-		chroma.NameAttribute:     paletteBlue,
-		chroma.NameBuiltin:       paletteGreen,
-		chroma.NameFunction:      paletteGreen,
-		chroma.NameClass:         paletteGreen,
-		chroma.NameVariable:      paletteYellow,
-		chroma.NameConstant:      paletteYellow,
-		chroma.Literal:           paletteBrightGreen,
-		chroma.LiteralString:     paletteBrightGreen,
-		chroma.LiteralNumber:     paletteYellow,
-		chroma.Operator:          paletteCyan,
-		chroma.Punctuation:       paletteCyan,
-		chroma.GenericDeleted:    paletteRed,
-		chroma.GenericInserted:   paletteGreen,
-		chroma.GenericHeading:    "bold " + paletteYellow,
-		chroma.GenericSubheading: paletteYellow,
+		chroma.Background:        "bg:" + colourCodeBG + " " + colourFG,
+		chroma.Error:             colourRed,
+		chroma.Comment:           "italic " + colourDim,
+		chroma.CommentPreproc:    "noitalic " + colourCyan,
+		chroma.Keyword:           colourMagenta,
+		chroma.KeywordType:       colourBlue,
+		chroma.Name:              colourFG,
+		chroma.NameTag:           colourBlue,
+		chroma.NameAttribute:     colourBlue,
+		chroma.NameBuiltin:       colourGreen,
+		chroma.NameFunction:      colourGreen,
+		chroma.NameClass:         colourGreen,
+		chroma.NameVariable:      colourYellow,
+		chroma.NameConstant:      colourYellow,
+		chroma.Literal:           colourBrightGreen,
+		chroma.LiteralString:     colourBrightGreen,
+		chroma.LiteralNumber:     colourYellow,
+		chroma.Operator:          colourCyan,
+		chroma.Punctuation:       colourCyan,
+		chroma.GenericDeleted:    colourRed,
+		chroma.GenericInserted:   colourGreen,
+		chroma.GenericHeading:    "bold " + colourYellow,
+		chroma.GenericSubheading: colourYellow,
 		chroma.GenericEmph:       "italic",
 		chroma.GenericStrong:     "bold",
-		chroma.GenericPrompt:     paletteDim,
+		chroma.GenericPrompt:     colourDim,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building the code style: %w", err)

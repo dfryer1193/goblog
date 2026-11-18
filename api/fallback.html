@@ -5,20 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <style>
-/* goblog's built-in pages: the tmux design's palette (see
-   service/static/style.css), self-contained so they work with no rendered
-   site at all. */
-:root {
-  --bg: #222222;
-  --fg: #dddddd;
-  --dim: #666666;
-  --red: #e84f4f;
-  --yellow: #fea63c;
-  --blue: #66aabb;
-  --rule: #333333;
-  --bar-bg: #3a3a3a;
-  --colour008: #666666;
-}
+/* goblog's built-in pages: the tmux design's palette, the same as the
+   site's stylesheet, inline so they work with no rendered site at all. */
+{{.Palette}}
 * { box-sizing: border-box; }
 html, body {
   margin: 0;
