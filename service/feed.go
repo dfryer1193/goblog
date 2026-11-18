@@ -112,11 +112,6 @@ func hasFeed(settings *models.SiteSettings) bool {
 	return settings.URL != ""
 }
 
-// publishedPosts returns the Published Posts among posts, in the same order.
-func publishedPosts(posts []*models.Post) []*models.Post {
-	return listedPosts(posts, false)
-}
-
 // publishTime is the moment a Post with Publish Date d is published:
 // midnight at the start of d in the build's timezone, in RFC 3339.
 func (b *siteBuild) publishTime(d models.Date) string {

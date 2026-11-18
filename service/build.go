@@ -95,7 +95,10 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 		return nil, err
 	}
 	b.problems = append(b.problems, problems...)
-	b.posts = listedPosts(posts, opts.IncludeDrafts)
+	b.posts = publishedPosts(posts)
+	if opts.IncludeDrafts {
+		b.posts = posts
+	}
 	slices.SortFunc(b.posts, newestFirst)
 	b.tags = collectTags(b.posts)
 
@@ -138,16 +141,16 @@ func renderNotFound(b *siteBuild) error {
 	return b.out.page("404.html", "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
 }
 
-// listedPosts returns the posts that the site shows: the Published Posts,
-// plus the Drafts if includeDrafts is set.
-func listedPosts(posts []*models.Post, includeDrafts bool) []*models.Post {
-	var listed []*models.Post
+// publishedPosts returns the Published Posts among posts, in the same order:
+// every Post that isn't a Draft.
+func publishedPosts(posts []*models.Post) []*models.Post {
+	var published []*models.Post
 	for _, p := range posts {
-		if includeDrafts || !p.Draft {
-			listed = append(listed, p)
+		if !p.Draft {
+			published = append(published, p)
 		}
 	}
-	return listed
+	return published
 }
 
 // newestFirst orders Posts by Publish Date, newest first, then by filename so
