@@ -98,10 +98,10 @@ func TestSiteSettingsTimezoneDecidesPublishDatesOverTheBuildOption(t *testing.T)
 		option        *time.Location
 		wantPublished bool
 	}{
-		{"settings timezone", "title: T\ntimezone: America/New_York\n", nil, false},
-		{"settings timezone beats the option", "title: T\ntimezone: UTC\n", newYork, true},
-		{"option when the settings have none", "title: T\n", newYork, false},
-		{"UTC when neither sets one", "title: T\n", nil, true},
+		{"settings timezone", "title: T\nurl: https://t.example\ntimezone: America/New_York\n", nil, false},
+		{"settings timezone beats the option", "title: T\nurl: https://t.example\ntimezone: UTC\n", newYork, true},
+		{"option when the settings have none", "title: T\nurl: https://t.example\n", newYork, false},
+		{"UTC when neither sets one", "title: T\nurl: https://t.example\n", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
