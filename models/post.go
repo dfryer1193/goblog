@@ -79,7 +79,7 @@ func (p *Post) URL() string {
 // PostURL is the site path of the Post with the given slug, e.g.
 // /posts/picluster/. It's the one place Post URLs are made.
 func PostURL(slug string) string {
-	return "/posts/" + slug + "/"
+	return "/" + PostsSection + "/" + slug + "/"
 }
 
 // Problem is something wrong with one file in the Content Repository that

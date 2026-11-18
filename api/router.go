@@ -14,15 +14,8 @@ import (
 	"github.com/dfryer1193/mjolnir/health"
 	"github.com/dfryer1193/mjolnir/router"
 
-	"github.com/dfryer1193/goblog/service"
+	"github.com/dfryer1193/goblog/models"
 )
-
-// indexFile is the file served for a directory's URL.
-const indexFile = "index.html"
-
-// notFoundFile is the site's 404 page, served for every path the site
-// doesn't have.
-const notFoundFile = "404.html"
 
 // Site is the rendered site goblog serves.
 type Site interface {
@@ -90,7 +83,7 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		name = "."
 	}
 	if strings.HasSuffix(urlPath, "/") {
-		name = path.Join(name, indexFile)
+		name = path.Join(name, models.IndexFile)
 	}
 	// Until there's a file to serve, the answer (a redirect or a 404) may
 	// change with the next render.
@@ -108,7 +101,7 @@ func (h fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if info.IsDir() {
-		if _, err = fs.Stat(files, path.Join(name, indexFile)); err != nil {
+		if _, err = fs.Stat(files, path.Join(name, models.IndexFile)); err != nil {
 			h.notFound(w, r, files)
 			return
 		}
@@ -135,7 +128,7 @@ func (h fileHandler) serveMissing(w http.ResponseWriter, r *http.Request) {
 // if there is one and the client accepts gzip, else f itself.
 func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string, f fs.File, info fs.FileInfo) {
 	w.Header().Set("Cache-Control", cacheControl(name))
-	gz, err := files.Open(name + service.GzipSuffix)
+	gz, err := files.Open(name + models.GzipSuffix)
 	if err == nil {
 		defer gz.Close()
 		w.Header().Add("Vary", "Accept-Encoding")
@@ -160,7 +153,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string,
 // has no 404 page, or it can't be read, the built-in one answers instead.
 func (h fileHandler) notFound(w http.ResponseWriter, r *http.Request, files fs.FS) {
 	w.Header().Set("Cache-Control", cacheShort)
-	gzName := notFoundFile + service.GzipSuffix
+	gzName := models.NotFoundFile + models.GzipSuffix
 	_, err := fs.Stat(files, gzName)
 	hasGzip := err == nil
 	if hasGzip && acceptsGzip(r.Header.Values("Accept-Encoding")) {
@@ -168,11 +161,11 @@ func (h fileHandler) notFound(w http.ResponseWriter, r *http.Request, files fs.F
 			defer gz.Close()
 			w.Header().Add("Vary", "Accept-Encoding")
 			w.Header().Set("Content-Encoding", "gzip")
-			writeWhole(w, r, notFoundFile, gz, info.Size(), http.StatusNotFound)
+			writeWhole(w, r, models.NotFoundFile, gz, info.Size(), http.StatusNotFound)
 			return
 		}
 	}
-	f, info, ok := openRegular(files, notFoundFile)
+	f, info, ok := openRegular(files, models.NotFoundFile)
 	if !ok {
 		h.pages.serveNotFound(w, r)
 		return
@@ -181,7 +174,7 @@ func (h fileHandler) notFound(w http.ResponseWriter, r *http.Request, files fs.F
 	if hasGzip {
 		w.Header().Add("Vary", "Accept-Encoding")
 	}
-	writeWhole(w, r, notFoundFile, f, info.Size(), http.StatusNotFound)
+	writeWhole(w, r, models.NotFoundFile, f, info.Size(), http.StatusNotFound)
 }
 
 // openRegular opens the site file name if it's a regular file.

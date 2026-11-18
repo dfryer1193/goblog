@@ -12,7 +12,7 @@ import (
 )
 
 // feedPath is the site path of the Atom feed.
-const feedPath = "/" + FeedFile
+const feedPath = "/" + models.FeedFile
 
 // postsWindow is the name of the navigation entry (the status bar window)
 // that the index and the Post pages belong to. It's also the index's pane
@@ -51,7 +51,7 @@ func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page, fe
 	for _, p := range posts {
 		postsFolder.children = append(postsFolder.children, treeLine{Name: p.Slug + markdownExt, URL: p.URL()})
 	}
-	tagsFolder := treeFolder{entry: treeLine{Name: tagsSection + "/", URL: tagsURL}}
+	tagsFolder := treeFolder{entry: treeLine{Name: models.TagsSection + "/", URL: tagsURL}}
 	for _, tag := range tags {
 		tagsFolder.children = append(tagsFolder.children, treeLine{Name: tag.Name, URL: tag.URL(), Class: "tag"})
 	}
@@ -111,16 +111,16 @@ func treeFor(tree []treeLine, sitePath string) []treeLine {
 // ends in "/": "index.html" for "/", "x/index.html" for "/x/". It's the
 // inverse of sitePath for such paths.
 func indexFileFor(sitePath string) string {
-	return strings.TrimPrefix(sitePath, "/") + "index.html"
+	return strings.TrimPrefix(sitePath, "/") + models.IndexFile
 }
 
 // sitePath is the site path that serves the output file name: "/" for
 // index.html, "/x/" for x/index.html, otherwise "/" + name.
 func sitePath(name string) string {
-	if name == "index.html" {
+	if name == models.IndexFile {
 		return "/"
 	}
-	if dir, ok := strings.CutSuffix(name, "/index.html"); ok {
+	if dir, ok := strings.CutSuffix(name, "/"+models.IndexFile); ok {
 		return "/" + dir + "/"
 	}
 	return "/" + name

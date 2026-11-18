@@ -10,9 +10,6 @@ import (
 	"github.com/dfryer1193/goblog/models"
 )
 
-// FeedFile is the Atom feed's output file, at /feed.xml.
-const FeedFile = "feed.xml"
-
 // atomNS is the Atom 1.0 (RFC 4287) XML namespace.
 const atomNS = "http://www.w3.org/2005/Atom"
 
@@ -105,7 +102,7 @@ func renderFeed(b *siteBuild) error {
 		f.Entries = append(f.Entries, e)
 	}
 
-	return b.out.xml(FeedFile, f)
+	return b.out.xml(models.FeedFile, f)
 }
 
 // hasFeed reports whether a site with settings has a feed and a sitemap.

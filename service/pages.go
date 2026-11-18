@@ -82,12 +82,14 @@ func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, *
 // also works on case-insensitive filesystems.
 var reservedPaths = map[string]bool{ //nolint:gochecknoglobals // fixed set
 	// Rendered from the Content Repository.
-	"index.html": true, postsDir: true, tagsSection: true, "images": true,
-	"feed.xml": true, "sitemap.xml": true, "404.html": true,
+	models.IndexFile: true, models.PostsSection: true, models.TagsSection: true, models.ImagesSection: true,
+	models.FeedFile: true, models.SitemapFile: true, models.NotFoundFile: true,
 	// The stylesheet, fonts and their licences, and room for more.
-	"static": true, assetsSection: true, "css": true, "fonts": true, "js": true, licensesSection: true,
-	"favicon.ico": true, "robots.txt": true,
-	// Served by goblog itself: mjolnir's probes and the webhook.
+	"static": true, models.AssetsSection: true, "css": true, models.FontsSection: true, "js": true,
+	models.LicensesSection: true,
+	"favicon.ico":          true, "robots.txt": true,
+	// Served by goblog itself: mjolnir's probes and the webhook (api's
+	// WebhookPath, which service can't import).
 	"livez": true, "readyz": true, "startupz": true, "webhook": true,
 }
 

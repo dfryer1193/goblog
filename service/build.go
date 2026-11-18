@@ -166,7 +166,7 @@ func renderBodies(b *siteBuild) error {
 
 // renderIndex renders the index: every listed Post, newest first.
 func renderIndex(b *siteBuild) error {
-	return b.out.page("index.html", "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
+	return b.out.page(models.IndexFile, "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
 }
 
 // renderPostPages renders one page per listed Post, at /posts/<slug>/.
@@ -183,7 +183,7 @@ func renderPostPages(b *siteBuild) error {
 
 // renderNotFound renders /404.html, the page for paths the site doesn't have.
 func renderNotFound(b *siteBuild) error {
-	return b.out.page("404.html", "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
+	return b.out.page(models.NotFoundFile, "404", pageData{Title: "not found", Label: "[no name]", NotFound: true})
 }
 
 // publishedPosts returns the Published Posts among posts, in the same order:

@@ -2,10 +2,9 @@ package service
 
 import (
 	"encoding/xml"
-)
 
-// sitemapFile is the sitemap's output file, at /sitemap.xml.
-const sitemapFile = "sitemap.xml"
+	"github.com/dfryer1193/goblog/models"
+)
 
 // sitemapNS is the sitemaps.org XML namespace.
 const sitemapNS = "http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -43,5 +42,5 @@ func renderSitemap(b *siteBuild) error {
 		set.URLs = append(set.URLs, sitemapURL{Loc: b.absURL(tag.URL())})
 	}
 
-	return b.out.xml(sitemapFile, set)
+	return b.out.xml(models.SitemapFile, set)
 }

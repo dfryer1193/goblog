@@ -21,7 +21,7 @@ func (t *Tag) URL() string {
 // TagURL is the site path of the tag called name, e.g. /tags/k8s/. It's
 // the one place tag URLs are made.
 func TagURL(name string) string {
-	return "/tags/" + TagSlug(name) + "/"
+	return "/" + TagsSection + "/" + TagSlug(name) + "/"
 }
 
 // TagSlug is the URL path segment for the tag called name: name in lower

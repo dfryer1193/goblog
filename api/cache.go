@@ -1,6 +1,10 @@
 package api
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/dfryer1193/goblog/models"
+)
 
 // Cache-Control values goblog sends.
 const (
@@ -18,11 +22,12 @@ const (
 	cacheNever = "no-store"
 )
 
-// immutablePrefixes are the site directories whose files are named by
-// version or content hash, so they never change under the same URL. goblog
-// writes them itself (the Content Repository can't: they're reserved paths),
-// and every file under them must be named that way.
-var immutablePrefixes = []string{"fonts/", "assets/"} //nolint:gochecknoglobals // fixed set
+// immutablePrefixes are the site sections whose files are named by content
+// hash, so they never change under the same URL. goblog writes them itself
+// (the Content Repository can't: they're reserved paths).
+var immutablePrefixes = []string{ //nolint:gochecknoglobals // fixed set
+	models.FontsSection + "/", models.AssetsSection + "/",
+}
 
 // cacheControl returns the Cache-Control for serving the site file name.
 func cacheControl(name string) string {
@@ -31,7 +36,7 @@ func cacheControl(name string) string {
 			return cacheImmutable
 		}
 	}
-	if strings.HasPrefix(name, "images/") {
+	if strings.HasPrefix(name, models.ImagesSection+"/") {
 		return cacheImages
 	}
 	return cacheShort

@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/dfryer1193/goblog/service"
+	"github.com/dfryer1193/goblog/models"
 )
 
 // feedContentType is the Atom feed's media type (RFC 4287).
@@ -24,7 +24,7 @@ var siteContentTypes = map[string]string{ //nolint:gochecknoglobals // fixed set
 // be gzipped: the feed is Atom, the site's own text files have fixed types,
 // and anything else goes by its extension.
 func contentType(name string) string {
-	if name == service.FeedFile {
+	if name == models.FeedFile {
 		return feedContentType
 	}
 	ext := strings.ToLower(path.Ext(name))
