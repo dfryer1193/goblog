@@ -2,6 +2,7 @@ package service
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -34,11 +35,15 @@ type siteBuild struct {
 	opts BuildOptions
 	// settings are the site settings from site.yaml.
 	settings models.SiteSettings
+	// tz is the build's timezone, which decides when Publish Dates arrive.
+	tz *time.Location
 	// today is now's date in the build's timezone.
 	today models.Date
 	// posts are the Posts the site shows, newest first: the Published
 	// Posts, plus the Drafts if the build includes them.
 	posts []*models.Post
+	// pages are the Pages the site shows, by name. renderPages sets them.
+	pages []*models.Page
 	// out collects the output files.
 	out *output
 	// problems are the files the build skipped so far.
@@ -53,6 +58,8 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 	renderPostPages,
 	renderPages,
 	renderTags,
+	renderFeed,
+	renderSitemap,
 	copyImages,
 }
 
@@ -75,10 +82,18 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	}
 	b := &siteBuild{
 		content: content, now: now, opts: opts, settings: settings,
-		today: models.DateOf(now.In(tz)), out: out,
+		tz: tz, today: models.DateOf(now.In(tz)), out: out,
 	}
-	if problem != nil {
+	switch {
+	case problem != nil:
 		b.problems = append(b.problems, *problem)
+	case settings.URL == "":
+		// Without a base URL there are no absolute URLs, which the feed and
+		// sitemap need. A missing site.yaml's Problem already covers this.
+		b.problems = append(b.problems, models.Problem{
+			Path: settingsFile,
+			Err:  errors.New("has no url, so the site has no feed.xml or sitemap.xml"),
+		})
 	}
 
 	posts, problems, err := readPosts(content, b.today)

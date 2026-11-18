@@ -35,12 +35,16 @@ Content Repository, Post, Page, Publish Date, Draft and Published Post.
 ├── pages/       one Page per .md file, e.g. pages/about.md → /about/
 ├── images/      images referenced from Posts by relative path (subfolders allowed)
 ├── templates/   ignored by goblog, e.g. a new-post template
-└── site.yaml    site settings: title, author, description, navigation, timezone
+└── site.yaml    site settings: title, author, description, url, navigation, timezone
 ```
 
 A Post's front matter needs a `title`. Its optional `date` (`YYYY-MM-DD`) is its
 Publish Date. A Post without one, or with one still in the future, is a Draft
 and isn't published. Only the default branch is published.
+
+The site publishes an Atom feed of the Published Posts at `/feed.xml` and a
+sitemap at `/sitemap.xml`. Both need absolute URLs, so they're only built when
+`site.yaml` sets the site's base `url`, e.g. `url: https://blog.example.com`.
 
 ## Running goblog
 

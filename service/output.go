@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"embed"
+	"encoding/xml"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -87,6 +88,20 @@ func (o *output) page(name, kind string, data pageData) error {
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)
 	}
+	o.files[name] = buf.Bytes()
+	return nil
+}
+
+// xml writes v, encoded as an XML document, to the output file at name.
+func (o *output) xml(name string, v any) error {
+	var buf bytes.Buffer
+	buf.WriteString(xml.Header)
+	enc := xml.NewEncoder(&buf)
+	enc.Indent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf("rendering %s: %w", name, err)
+	}
+	buf.WriteByte('\n')
 	o.files[name] = buf.Bytes()
 	return nil
 }

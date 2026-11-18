@@ -15,7 +15,7 @@ import (
 var now = time.Date(2026, time.March, 10, 15, 0, 0, 0, time.UTC) //nolint:gochecknoglobals // test fixture
 
 // testSettings is the site.yaml contentRepo adds when a test doesn't give one.
-const testSettings = "title: Test blog\n"
+const testSettings = "title: Test blog\nurl: https://blog.example.com\n"
 
 // contentRepo builds an in-memory Content Repository from path → file text.
 // It has a minimal site.yaml unless files has one; delete it from the result
