@@ -89,12 +89,25 @@ func TestBrokenReferencesSkipThatPostAndTheRestStillRenders(t *testing.T) {
 			"[fine](../../repo/posts/fine.md)",
 			[]string{`"../../repo/posts/fine.md"`, "escapes the Content Repository"},
 		},
+		{"missing image", "![gone](../images/gone.png)", []string{`"../images/gone.png"`, "not found"}},
+		{
+			"image out of the Content Repository",
+			"![passwd](../../../etc/passwd)",
+			[]string{`"../../../etc/passwd"`, "escapes the Content Repository"},
+		},
+		{"image outside images/", "![post](./fine.md)", []string{`"./fine.md"`, "isn't on the site"}},
+		{
+			"link to a file that isn't published",
+			"[readme](../README.md)",
+			[]string{`"../README.md"`, "isn't on the site"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := contentRepo(map[string]string{
 				"posts/broken.md": "---\ntitle: Broken\ndate: 2026-01-02\n---\n\nSee " + tt.body + ".\n",
 				"posts/fine.md":   "---\ntitle: Fine\ndate: 2026-01-01\n---\n",
+				"README.md":       "# My blog\n",
 			})
 
 			site := build(t, repo, now, service.BuildOptions{})
@@ -102,4 +115,56 @@ func TestBrokenReferencesSkipThatPostAndTheRestStillRenders(t *testing.T) {
 			assertSkippedFor(t, site, "posts/broken.md", tt.wants...)
 		})
 	}
+}
+
+func TestEveryBrokenReferenceInAPostIsReported(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/broken.md": "---\ntitle: Broken\ndate: 2026-01-02\n---\n\n[a](./a.md) ![b](../images/b.png)\n",
+		"posts/fine.md":   "---\ntitle: Fine\ndate: 2026-01-01\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertSkippedFor(t, site, "posts/broken.md", `"./a.md"`, `"../images/b.png"`)
+}
+
+func TestAbsoluteURLsAndFragmentsAreLeftAlone(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/out.md": "---\ntitle: Out\ndate: 2026-01-01\n---\n\n" +
+			"[web](https://example.com/a.md) [plain](http://example.com/) [mail](mailto:me@example.com) " +
+			"[proto](//example.com/x.png) [site](/posts/other/) [here](#below) " +
+			"![remote](https://example.com/pic.png) <https://example.com/auto>\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	post := page(t, site, "posts/out/index.html")
+	for _, want := range []string{
+		`<a href="https://example.com/a.md">web</a>`,
+		`<a href="http://example.com/">plain</a>`,
+		`<a href="mailto:me@example.com">mail</a>`,
+		`<a href="//example.com/x.png">proto</a>`,
+		`<a href="/posts/other/">site</a>`,
+		`<a href="#below">here</a>`,
+		`<img src="https://example.com/pic.png" alt="remote">`,
+		`<a href="https://example.com/auto">https://example.com/auto</a>`,
+	} {
+		assertContains(t, "post", post, want)
+	}
+}
+
+func TestUnreferencedImagesAreCopiedToo(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"images/og/card.png": "card",
+		"notes/private.png":  "not an image folder",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	if got := page(t, site, "images/og/card.png"); got != "card" {
+		t.Errorf("images/og/card.png = %q, want it copied unchanged", got)
+	}
+	assertNoFile(t, site, "notes/private.png")
 }
