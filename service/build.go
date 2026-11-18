@@ -45,6 +45,7 @@ type siteBuild struct {
 var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed list of steps
 	renderIndex,
 	renderPostPages,
+	copyImages,
 }
 
 // Build renders the whole site from the Content Repository files in content,

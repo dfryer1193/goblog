@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -57,41 +58,57 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		if link, isLink := n.(*ast.Link); isLink {
-			dest, err := x.resolve(r.from, string(link.Destination))
-			if err != nil {
-				r.errs = append(r.errs, err)
-			} else {
-				link.Destination = []byte(dest)
-			}
+		var (
+			dest *[]byte
+			kind string
+		)
+		switch n := n.(type) {
+		case *ast.Link:
+			dest, kind = &n.Destination, "link"
+		case *ast.Image:
+			dest, kind = &n.Destination, "image"
+		default:
+			return ast.WalkContinue, nil
+		}
+		resolved, err := x.resolve(r.from, string(*dest), kind == "image")
+		if err != nil {
+			r.errs = append(r.errs, fmt.Errorf("%s %q %w", kind, *dest, err))
+		} else {
+			*dest = []byte(resolved)
 		}
 		return ast.WalkContinue, nil
 	})
 }
 
 // resolve returns the site URL for the destination dest found in the Content
-// Repository file from. Destinations that aren't relative paths come back
-// unchanged.
-func (x *references) resolve(from, dest string) (string, error) {
+// Repository file from. Destinations that aren't relative paths, such as
+// absolute URLs, come back unchanged. An image may only point into images/.
+func (x *references) resolve(from, dest string, image bool) (string, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
-		return "", fmt.Errorf("link %q is not a valid URL", dest)
+		return "", errors.New("is not a valid URL")
 	}
 	if u.Scheme != "" || u.Host != "" || u.Path == "" || strings.HasPrefix(u.Path, "/") {
 		return dest, nil
 	}
 	target := path.Join(path.Dir(from), u.Path)
 	if target == ".." || strings.HasPrefix(target, "../") {
-		return "", fmt.Errorf("link %q escapes the Content Repository", dest)
+		return "", errors.New("escapes the Content Repository")
 	}
-	if path.Dir(target) == postsDir && path.Ext(target) == ".md" {
-		if !isFile(x.content, target) {
-			return "", fmt.Errorf("link %q: %s not found", dest, target)
-		}
-		site := &url.URL{Path: "/posts/" + strings.TrimSuffix(path.Base(target), ".md") + "/", Fragment: u.Fragment}
-		return site.String(), nil
+
+	var site *url.URL
+	switch {
+	case strings.HasPrefix(target, imagesDir+"/"):
+		site = &url.URL{Path: "/" + target}
+	case !image && path.Dir(target) == postsDir && path.Ext(target) == ".md":
+		site = &url.URL{Path: "/posts/" + strings.TrimSuffix(path.Base(target), ".md") + "/", Fragment: u.Fragment}
+	default:
+		return "", fmt.Errorf("points at %s, which isn't on the site", target)
 	}
-	return dest, nil
+	if !isFile(x.content, target) {
+		return "", fmt.Errorf("points at %s, which is not found", target)
+	}
+	return site.String(), nil
 }
 
 // isFile reports whether name is a regular file in content. A symlink isn't
