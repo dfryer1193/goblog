@@ -73,8 +73,11 @@ when you use a deploy key.
 At startup goblog makes a shallow, single-branch clone of the Content
 Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
 renders the site into a fresh directory there and switches serving over to it.
-Until that first render, `/readyz` reports not ready. Unknown paths get the
-site's own 404 page, with status 404.
+Until that first render succeeds, `/readyz` reports not ready, and every
+other request (except `/webhook`) gets status 503 with a built-in "starting"
+page, `Cache-Control: no-store` and `Retry-After: 10`. Unknown paths get the
+site's own 404 page, with status 404, or a built-in 404 page in the same style
+if the site's can't be read.
 
 ### Keeping the site in sync
 
@@ -88,7 +91,8 @@ one waits for the other.
   answers 401 to one without a valid signature. A `push` gets 202 straight
   away, and goblog fetches and renders in the background. Pushes that arrive
   during a sync cause one more sync after it. A `ping` gets 204. Without
-  `GOBLOG_WEBHOOK_SECRET`, `/webhook` answers 404 and goblog logs at startup
+  `GOBLOG_WEBHOOK_SECRET`, `/webhook` answers like an unknown path (404, to
+  every method) and goblog logs at startup
   that only polling will sync.
 - **The poll.** Every `GOBLOG_POLL_INTERVAL`, goblog asks the remote for the
   branch's latest commit (like `git ls-remote`, with no fetch) and fetches and

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+/* goblog's built-in pages: the tmux design's palette (see
+   service/static/style.css), self-contained so they work with no rendered
+   site at all. */
+:root {
+  --bg: #222222;
+  --fg: #dddddd;
+  --dim: #666666;
+  --red: #e84f4f;
+  --yellow: #fea63c;
+  --blue: #66aabb;
+  --rule: #333333;
+  --bar-bg: #3a3a3a;
+  --colour008: #666666;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  font-size: 15px;
+  line-height: 1.6;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.frame { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; height: 100dvh; }
+.tbar { display: flex; align-items: center; height: 2.6rem; font-size: 1.15rem; background: var(--bar-bg); white-space: nowrap; }
+.tbar .sess { padding-left: 1ch; font-weight: 700; }
+.tbar .sep { color: var(--colour008); padding: 0 1ch; }
+.pane { position: relative; margin: 2px; padding: 1.2em 2ch 1em; border: 1px solid var(--yellow); overflow: auto; }
+.pane > .label { position: absolute; top: -.1em; left: 1ch; padding: 0 1ch; background: var(--bg); color: var(--yellow); font-size: .85em; }
+.pane.err { border-color: var(--red); }
+.pane.err > .label { color: var(--red); }
+.content { max-width: 80ch; }
+.error-text { color: var(--red); font-weight: 700; }
+.pane:not(.err) .error-text { color: var(--yellow); }
+.info { padding: .1em 1.5ch; color: var(--dim); font-size: .85em; border-top: 1px solid var(--rule); }
+</style>
+</head>
+<body>
+<div class="frame">
+<header class="tbar"><span class="sess">[goblog]</span><span class="sep">//</span></header>
+<main class="pane{{if .Error}} err{{end}}"><span class="label">{{.Label}}</span>
+<div class="content">
+<p class="error-text">{{.Headline}}</p>
+<p>{{.Message}}{{if .LinkHome}} <a href="/">Go home</a>.{{end}}</p>
+</div>
+</main>
+<footer class="info"><span>goblog</span></footer>
+</div>
+</body>
+</html>

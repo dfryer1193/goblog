@@ -29,7 +29,8 @@ const (
 // Webhook configures the webhook endpoint.
 type Webhook struct {
 	// Secret is the webhook's shared secret, for checking GitHub's HMAC
-	// signature. Empty disables the endpoint: it answers 404.
+	// signature. Empty disables the endpoint: its path is then answered
+	// like any path the site doesn't have.
 	Secret string
 	// Trigger asks for a sync in the background. It must return quickly.
 	Trigger func()
@@ -38,14 +39,16 @@ type Webhook struct {
 // webhookHandler receives GitHub webhook events: a push with a valid
 // signature triggers a sync and gets 202; a ping gets 204. A missing or
 // invalid signature gets 401 and triggers nothing. Methods other than POST
-// get 405, and everything gets 404 while the endpoint is disabled.
+// get 405. While the endpoint is disabled, every request, whatever its
+// method, is answered like a path the site doesn't have.
 type webhookHandler struct {
-	hook Webhook
+	hook  Webhook
+	files fileHandler
 }
 
 func (h webhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.hook.Secret == "" {
-		http.NotFound(w, r)
+		h.files.serveMissing(w, r)
 		return
 	}
 	if r.Method != http.MethodPost {
