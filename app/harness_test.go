@@ -205,7 +205,7 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
-	srv := httptest.NewServer(a.Handler())
+	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
 	return &goblog{app: a, srv: srv, clock: clock, workDir: cfg.WorkDir}
 }
