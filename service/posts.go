@@ -23,6 +23,9 @@ import (
 // postsDir is the Content Repository folder holding Posts.
 const postsDir = "posts"
 
+// markdownExt is the extension of Post and Page files.
+const markdownExt = ".md"
+
 // frontMatter is a Post's YAML front matter as the author wrote it.
 type frontMatter struct {
 	Title   string   `yaml:"title"`
@@ -48,7 +51,7 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 		problems []models.Problem
 	)
 	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".md" {
+		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(postsDir, e.Name())
@@ -81,11 +84,15 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	if title == "" {
 		return nil, errors.New("front matter has no title")
 	}
+	tags, err := parseTags(meta.Tags)
+	if err != nil {
+		return nil, err
+	}
 	post := &models.Post{
 		Path:    name,
-		Slug:    strings.TrimSuffix(path.Base(name), ".md"),
+		Slug:    strings.TrimSuffix(path.Base(name), markdownExt),
 		Title:   title,
-		Tags:    meta.Tags,
+		Tags:    tags,
 		Summary: meta.Summary,
 	}
 	if post.PublishDate, err = parseDate(meta.Date); err != nil {
@@ -161,6 +168,19 @@ func splitFrontMatter(src []byte) ([]byte, []byte, error) {
 		offset += len(line) + 1
 	}
 	return nil, nil, errors.New("front matter has no closing --- line")
+}
+
+// parseTags trims the front-matter tags and checks that each has a URL.
+func parseTags(raw []string) ([]string, error) {
+	tags := make([]string, 0, len(raw))
+	for _, t := range raw {
+		t = strings.TrimSpace(t)
+		if models.TagSlug(t) == "" {
+			return nil, fmt.Errorf("tag %q has no letters or digits", t)
+		}
+		tags = append(tags, t)
+	}
+	return tags, nil
 }
 
 // parseDate parses a front-matter date. An empty date is the zero Date.
