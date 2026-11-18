@@ -23,33 +23,51 @@ const layoutTemplate = "templates/layout.html"
 var templateFS embed.FS
 
 // pageData is what every page template gets. Each kind of page fills in the
-// fields it needs.
+// fields it needs; output.page fills in Site.
 type pageData struct {
+	// Site are the site settings: title, author, description, base URL and
+	// navigation.
+	Site *models.SiteSettings
 	// Title is the page's own title. Empty means the site's title.
 	Title string
 	// Posts are the Posts a listing page shows, in display order.
 	Posts []*models.Post
 	// Post is the Post a Post page shows.
 	Post *models.Post
+	// Page is the Page a Page's page shows.
+	Page *models.Page
+	// Tags are the tags the tags page lists.
+	Tags []*models.Tag
+	// Tag is the tag a tag page shows; its Posts are also in Posts.
+	Tag *models.Tag
+}
+
+// templateFuncs are the functions every template can call.
+var templateFuncs = template.FuncMap{ //nolint:gochecknoglobals // fixed set
+	// tagURL is the site path of the tag with the given name.
+	"tagURL": models.TagURL,
 }
 
 // output collects a build's output files.
 type output struct {
+	// settings are passed to every page as pageData.Site.
+	settings  *models.SiteSettings
 	templates map[string]*template.Template
 	files     map[string][]byte
 }
 
-func newOutput() (*output, error) {
+func newOutput(settings *models.SiteSettings) (*output, error) {
 	names, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("listing templates: %w", err)
 	}
-	out := &output{templates: map[string]*template.Template{}, files: map[string][]byte{}}
+	out := &output{settings: settings, templates: map[string]*template.Template{}, files: map[string][]byte{}}
 	for _, name := range names {
 		if name == layoutTemplate {
 			continue
 		}
-		t, perr := template.ParseFS(templateFS, layoutTemplate, name)
+		t, perr := template.New(path.Base(layoutTemplate)).Funcs(templateFuncs).
+			ParseFS(templateFS, layoutTemplate, name)
 		if perr != nil {
 			return nil, fmt.Errorf("parsing %s: %w", name, perr)
 		}
@@ -64,6 +82,7 @@ func (o *output) page(name, kind string, data pageData) error {
 	if !ok {
 		return fmt.Errorf("no %s template", kind)
 	}
+	data.Site = o.settings
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)

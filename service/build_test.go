@@ -14,9 +14,14 @@ import (
 // date is the same in UTC and America/New_York.
 var now = time.Date(2026, time.March, 10, 15, 0, 0, 0, time.UTC) //nolint:gochecknoglobals // test fixture
 
+// testSettings is the site.yaml contentRepo adds when a test doesn't give one.
+const testSettings = "title: Test blog\n"
+
 // contentRepo builds an in-memory Content Repository from path → file text.
+// It has a minimal site.yaml unless files has one; delete it from the result
+// to test a Content Repository without one.
 func contentRepo(files map[string]string) fstest.MapFS {
-	repo := fstest.MapFS{}
+	repo := fstest.MapFS{"site.yaml": &fstest.MapFile{Data: []byte(testSettings)}}
 	for name, text := range files {
 		repo[name] = &fstest.MapFile{Data: []byte(text)}
 	}

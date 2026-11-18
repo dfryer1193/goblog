@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -13,8 +14,8 @@ import (
 // BuildOptions are the site build's inputs besides the Content Repository and
 // the current time. The zero value is a valid default.
 type BuildOptions struct {
-	// Timezone decides which day "today" is when comparing Publish Dates.
-	// Nil means UTC.
+	// Timezone decides which day "today" is when comparing Publish Dates,
+	// when site.yaml doesn't set a timezone. Nil means UTC.
 	Timezone *time.Location
 	// IncludeDrafts renders Drafts as well as Published Posts, marked as
 	// Drafts, for previewing.
@@ -31,6 +32,8 @@ type siteBuild struct {
 	// now is the time of the build.
 	now  time.Time
 	opts BuildOptions
+	// settings are the site settings from site.yaml.
+	settings models.SiteSettings
 	// today is now's date in the build's timezone.
 	today models.Date
 	// posts are the Posts the site shows, newest first: the Published
@@ -48,6 +51,9 @@ type siteBuild struct {
 var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed list of steps
 	renderIndex,
 	renderPostPages,
+	renderPages,
+	renderTags,
+	copyImages,
 }
 
 // Build renders the whole site from the Content Repository files in content,
@@ -58,21 +64,28 @@ var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed 
 // Site's Problems while the rest of the site still builds. An error means the
 // site as a whole couldn't be built.
 func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error) {
-	tz := opts.Timezone
-	if tz == nil {
-		tz = time.UTC
-	}
-	out, err := newOutput()
+	settings, problem, err := readSettings(content)
 	if err != nil {
 		return nil, err
 	}
-	b := &siteBuild{content: content, now: now, opts: opts, today: models.DateOf(now.In(tz)), out: out}
+	tz := cmp.Or(settings.Timezone, opts.Timezone, time.UTC)
+	out, err := newOutput(&settings)
+	if err != nil {
+		return nil, err
+	}
+	b := &siteBuild{
+		content: content, now: now, opts: opts, settings: settings,
+		today: models.DateOf(now.In(tz)), out: out,
+	}
+	if problem != nil {
+		b.problems = append(b.problems, *problem)
+	}
 
 	posts, problems, err := readPosts(content, b.today)
 	if err != nil {
 		return nil, err
 	}
-	b.problems = problems
+	b.problems = append(b.problems, problems...)
 	b.posts = listedPosts(posts, opts.IncludeDrafts)
 	slices.SortFunc(b.posts, newestFirst)
 
