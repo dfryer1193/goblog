@@ -156,6 +156,27 @@ func TestPublishDateArrivesAtMidnightInTheBuildTimezone(t *testing.T) {
 	}
 }
 
+func TestIncludingDraftsRendersThemMarkedAsDrafts(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/published.md": "---\ntitle: Published\ndate: 2026-03-01\n---\n",
+		"posts/scheduled.md": "---\ntitle: Scheduled\ndate: 2026-04-01\n---\n",
+		"posts/b-undated.md": "---\ntitle: B undated\n---\nWork in progress.\n",
+		"posts/a-undated.md": "---\ntitle: A undated\n---\nWork in progress.\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{IncludeDrafts: true})
+
+	assertNoProblems(t, site)
+	// Undated Drafts have no Publish Date to sort by, so they come first.
+	assertInOrder(t, "index", page(t, site, "index.html"),
+		"draft", ">A undated<", "draft", ">B undated<", "2026.04.01", "draft", ">Scheduled<", ">Published<")
+	assertContains(t, "undated Draft", page(t, site, "posts/a-undated/index.html"), "draft")
+	assertContains(t, "scheduled Draft", page(t, site, "posts/scheduled/index.html"), "2026.04.01")
+	if published := page(t, site, "posts/published/index.html"); strings.Contains(published, "draft") {
+		t.Errorf("the Published Post is marked as a draft:\n%s", published)
+	}
+}
+
 func TestInvalidFrontMatterSkipsThatPostAndTheRestStillRenders(t *testing.T) {
 	tests := []struct {
 		name    string

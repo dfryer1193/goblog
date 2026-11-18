@@ -16,6 +16,9 @@ type BuildOptions struct {
 	// Timezone decides which day "today" is when comparing Publish Dates.
 	// Nil means UTC.
 	Timezone *time.Location
+	// IncludeDrafts renders Drafts as well as Published Posts, marked as
+	// Drafts, for previewing.
+	IncludeDrafts bool
 }
 
 // Build renders the whole site from the Content Repository files in content,
@@ -36,7 +39,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	if err != nil {
 		return nil, err
 	}
-	listed := publishedPosts(posts)
+	listed := listedPosts(posts, opts.IncludeDrafts)
 	slices.SortFunc(listed, newestFirst)
 
 	out, err := newOutput()
@@ -55,11 +58,12 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	return &models.Site{Files: out.files, Problems: problems}, nil
 }
 
-// publishedPosts returns the posts that the site lists.
-func publishedPosts(posts []*models.Post) []*models.Post {
+// listedPosts returns the posts that the site shows: the Published Posts,
+// plus the Drafts if includeDrafts is set.
+func listedPosts(posts []*models.Post, includeDrafts bool) []*models.Post {
 	var listed []*models.Post
 	for _, p := range posts {
-		if !p.Draft {
+		if includeDrafts || !p.Draft {
 			listed = append(listed, p)
 		}
 	}
@@ -67,8 +71,15 @@ func publishedPosts(posts []*models.Post) []*models.Post {
 }
 
 // newestFirst orders Posts by Publish Date, newest first, then by filename so
-// that the order never changes between builds.
+// that the order never changes between builds. Posts with no Publish Date
+// (Drafts) come before all others.
 func newestFirst(a, b *models.Post) int {
+	if a.PublishDate.IsZero() != b.PublishDate.IsZero() {
+		if a.PublishDate.IsZero() {
+			return -1
+		}
+		return 1
+	}
 	if c := b.PublishDate.Compare(a.PublishDate); c != 0 {
 		return c
 	}

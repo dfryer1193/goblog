@@ -1,7 +1,7 @@
 {{define "content"}}
 <article>
 <h1>{{.Post.Title}}</h1>
-<p><time datetime="{{.Post.PublishDate}}">{{.Post.PublishDate.Display}}</time></p>
+<p>{{template "date" .Post}}</p>
 {{- template "tags" .Post.Tags}}
 {{.Post.Body}}
 </article>

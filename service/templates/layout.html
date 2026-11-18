@@ -21,3 +21,7 @@
 </ul>
 {{- end}}
 {{- end}}
+{{- define "date"}}
+{{- if not .PublishDate.IsZero}}<time datetime="{{.PublishDate}}">{{.PublishDate.Display}}</time>{{end}}
+{{- if .Draft}} <strong>draft</strong>{{end}}
+{{- end}}
