@@ -231,3 +231,27 @@ func TestGoPlainTextErrorsNeverReachAClient(t *testing.T) {
 		assertNoPlainGoErrors(t, g, "rendered without a 404 page")
 	}
 }
+
+func TestUnknownPathsGetTheBuiltIn404WhenTheSites404CantBeRead(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	g.removeSite404(t)
+	sites, err := filepath.Glob(filepath.Join(g.workDir, "output", "site-*"))
+	if err != nil || len(sites) != 1 {
+		t.Fatalf("finding the rendered site: %v (found %d)", err, len(sites))
+	}
+	for _, name := range []string{"404.html", "404.html.gz"} {
+		if err = os.Mkdir(filepath.Join(sites[0], name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, header := range []http.Header{nil, {"Accept-Encoding": {"gzip"}}} {
+		resp := g.request(t, http.MethodGet, "/nope", header)
+		assertStatus(t, "/nope", resp, http.StatusNotFound)
+		assertBuiltInPage(t, "/nope", resp, "[no name]")
+	}
+}

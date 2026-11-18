@@ -61,9 +61,10 @@ func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 
 // fileHandler serves the current site's files: a directory's URL serves its
 // index.html, a directory's URL without the trailing slash redirects to it,
-// and anything else is a 404, answered with the site's 404.html. It never
-// lists directories. A file with a gzip
-// variant (see service.WriteSite) is served gzipped to clients that accept
+// and anything else is a 404, answered with the site's 404.html (or the
+// built-in 404 page if that can't be read). Before the first render, every
+// request gets the built-in 503 page. It never lists directories. A file
+// with a gzip variant (see service.WriteSite) is served gzipped to clients that accept
 // gzip, and Cache-Control follows cacheControl.
 type fileHandler struct {
 	site  Site
