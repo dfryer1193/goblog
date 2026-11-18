@@ -171,6 +171,9 @@ func (p *Publisher) publish(checkout data.Checkout) error {
 	for _, problem := range site.Problems {
 		p.cfg.Logger.Warn("Skipped a file", "commit", checkout.Commit, "problem", problem.String())
 	}
+	for _, warning := range site.Warnings {
+		p.cfg.Logger.Warn("Worked around a problem in a file", "commit", checkout.Commit, "warning", warning.String())
+	}
 
 	if err = os.MkdirAll(p.cfg.OutputDir, outputDirMode); err != nil {
 		return fmt.Errorf("creating %s: %w", p.cfg.OutputDir, err)
@@ -191,7 +194,10 @@ func (p *Publisher) publish(checkout data.Checkout) error {
 	prev := p.current.Swap(&render{
 		dir: dir, files: os.DirFS(dir), commit: checkout.Commit, tz: site.Timezone, day: site.Today,
 	})
-	p.cfg.Logger.Info("Switched to a new render", "commit", checkout.Commit, "problems", len(site.Problems))
+	p.cfg.Logger.Info(
+		"Switched to a new render",
+		"commit", checkout.Commit, "problems", len(site.Problems), "warnings", len(site.Warnings),
+	)
 	if prev != nil {
 		if err = os.RemoveAll(prev.dir); err != nil {
 			p.cfg.Logger.Warn("Failed to remove the previous render", "dir", prev.dir, "error", err)

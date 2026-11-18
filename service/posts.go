@@ -26,47 +26,49 @@ type postFrontMatter struct {
 	Summary string   `yaml:"summary"`
 }
 
-// readPosts reads and renders every Post in content's posts/ folder, deciding
-// which are Drafts as of today. Posts it can't use come back as Problems.
-func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Problem, error) {
-	entries, err := fs.ReadDir(content, postsDir)
+// readPosts reads every Post in the Content Repository's posts/ folder,
+// deciding which are Drafts as of today, and keeps each one's Markdown in
+// b.docs to render later. Posts it can't use become Problems.
+func (b *siteBuild) readPosts() ([]*models.Post, error) {
+	entries, err := fs.ReadDir(b.content, postsDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading %s: %w", postsDir, err)
+		return nil, fmt.Errorf("reading %s: %w", postsDir, err)
 	}
 
-	md := newMarkdown(content)
-	var (
-		posts    []*models.Post
-		problems []models.Problem
-	)
+	var posts []*models.Post
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(postsDir, e.Name())
-		post, perr := readPost(content, md, name, today)
+		post, d, perr := readPost(b.content, b.md, name, b.today)
 		if perr != nil {
-			problems = append(problems, models.Problem{Path: name, Err: perr})
+			b.problems = append(b.problems, models.Problem{Path: name, Err: perr})
 			continue
 		}
+		b.docs[name] = d
 		posts = append(posts, post)
 	}
-	return posts, problems, nil
+	return posts, nil
 }
 
-// readPost reads, validates and renders the Post at name.
-func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Date) (*models.Post, error) {
+// readPost reads and validates the Post at name, and parses its Markdown,
+// which the caller renders once it knows which Posts are on the site. The
+// Post has no Body yet.
+func readPost(
+	content fs.FS, md goldmark.Markdown, name string, today models.Date,
+) (*models.Post, *document, error) {
 	var meta postFrontMatter
 	body, err := readFrontMatter(content, name, &meta)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tags, err := parseTags(meta.Tags)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	post := &models.Post{
 		Path:    name,
@@ -76,22 +78,19 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 		Summary: meta.Summary,
 	}
 	if post.PublishDate, err = parseDate(meta.Date); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	post.Draft = post.PublishDate.IsZero() || post.PublishDate.Compare(today) > 0
 
 	d, err := parseMarkdown(md, name, body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if post.Summary == "" {
 		post.Summary = firstParagraph(d.doc, d.src)
 	}
 	post.Words = countWords(d.doc, d.src)
-	if post.Body, err = d.render(md); err != nil {
-		return nil, err
-	}
-	return post, nil
+	return post, d, nil
 }
 
 // firstParagraph returns the plain text of the first paragraph in doc, with

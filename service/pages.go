@@ -16,35 +16,33 @@ import (
 // pagesDir is the Content Repository folder holding Pages.
 const pagesDir = "pages"
 
-// readPages reads and renders each Page in the Content Repository's pages/
-// folder, sorted by name. Pages it can't use come back as Problems.
-func readPages(content fs.FS) ([]*models.Page, []models.Problem, error) {
-	entries, err := fs.ReadDir(content, pagesDir)
+// readPages reads each Page in the Content Repository's pages/ folder,
+// sorted by name, and keeps each one's Markdown in b.docs to render later.
+// Pages it can't use become Problems.
+func (b *siteBuild) readPages() ([]*models.Page, error) {
+	entries, err := fs.ReadDir(b.content, pagesDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading %s: %w", pagesDir, err)
+		return nil, fmt.Errorf("reading %s: %w", pagesDir, err)
 	}
 
-	md := newMarkdown(content)
-	var (
-		pages    []*models.Page
-		problems []models.Problem
-	)
+	var pages []*models.Page
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
 		}
 		name := path.Join(pagesDir, e.Name())
-		p, perr := readPage(content, md, name)
+		p, d, perr := readPage(b.content, b.md, name)
 		if perr != nil {
-			problems = append(problems, models.Problem{Path: name, Err: perr})
+			b.problems = append(b.problems, models.Problem{Path: name, Err: perr})
 			continue
 		}
+		b.docs[name] = d
 		pages = append(pages, p)
 	}
-	return pages, problems, nil
+	return pages, nil
 }
 
 // renderPages renders each Page at /<name>/.
@@ -58,27 +56,25 @@ func renderPages(b *siteBuild) error {
 	return nil
 }
 
-// readPage reads, validates and renders the Page at name. A Page's front
-// matter needs only a title; other fields are ignored.
-func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, error) {
+// readPage reads and validates the Page at name, and parses its Markdown,
+// which the caller renders once it knows which Pages are on the site. The
+// Page has no Body yet. A Page's front matter needs only a title; other
+// fields are ignored.
+func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, *document, error) {
 	pageName := fileStem(name)
 	if err := checkPageName(pageName); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var meta titleFrontMatter
 	body, err := readFrontMatter(content, name, &meta)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	d, err := parseMarkdown(md, name, body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	page := &models.Page{Path: name, Name: pageName, Title: meta.Title}
-	if page.Body, err = d.render(md); err != nil {
-		return nil, err
-	}
-	return page, nil
+	return &models.Page{Path: name, Name: pageName, Title: meta.Title}, d, nil
 }
 
 // reservedPaths are the top-level site paths that goblog itself uses, so no

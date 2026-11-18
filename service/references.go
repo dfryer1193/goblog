@@ -27,6 +27,18 @@ type referencing struct {
 	from string
 	// errs are its references that can't be resolved.
 	errs []error
+	// links are its links to Posts and Pages.
+	links []siteLink
+}
+
+// siteLink is a link to a Post or Page, which only renders as a link if
+// that Post or Page is on the site.
+type siteLink struct {
+	node *ast.Link
+	// dest is the link's destination as the author wrote it.
+	dest string
+	// target is the Content Repository file it points at, e.g. posts/x.md.
+	target string
 }
 
 // err returns the bad references, all on one line, or nil if there are none.
@@ -78,6 +90,7 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 			dest *[]byte
 			kind referenceKind
 		)
+		link, isLink := n.(*ast.Link)
 		switch n := n.(type) {
 		case *ast.Link:
 			dest, kind = &n.Destination, linkReference
@@ -86,11 +99,15 @@ func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Conte
 		default:
 			return ast.WalkContinue, nil
 		}
-		resolved, err := x.resolve(r.from, string(*dest), kind)
+		written := string(*dest)
+		resolved, target, err := x.resolve(r.from, written, kind)
 		if err != nil {
-			r.errs = append(r.errs, fmt.Errorf("%s %q %w", kind, *dest, err))
-		} else {
-			*dest = []byte(resolved)
+			r.errs = append(r.errs, fmt.Errorf("%s %q %w", kind, written, err))
+			return ast.WalkContinue, nil
+		}
+		*dest = []byte(resolved)
+		if isLink && target != "" {
+			r.links = append(r.links, siteLink{node: link, dest: written, target: target})
 		}
 		return ast.WalkContinue, nil
 	})
@@ -117,41 +134,47 @@ func (k referenceKind) String() string {
 }
 
 // resolve returns the site URL for the destination dest, of the given kind,
-// found in the Content Repository file from. Destinations that aren't
-// relative paths, such as absolute URLs, come back unchanged. An image may
-// only point into images/.
-func (x *references) resolve(from, dest string, kind referenceKind) (string, error) {
+// found in the Content Repository file from, and, for a Post or Page, the
+// Content Repository file it points at. Destinations that aren't relative
+// paths, such as absolute URLs, come back unchanged. An image may only point
+// into images/.
+func (x *references) resolve(from, dest string, kind referenceKind) (string, string, error) {
 	u, err := url.Parse(dest)
 	if err != nil {
-		return "", errors.New("is not a valid URL")
+		return "", "", errors.New("is not a valid URL")
 	}
 	if u.Scheme != "" || u.Host != "" || u.Path == "" || strings.HasPrefix(u.Path, "/") {
-		return dest, nil
+		return dest, "", nil
 	}
 	target := path.Join(path.Dir(from), u.Path)
 	if target == ".." || strings.HasPrefix(target, "../") {
-		return "", errors.New("escapes the Content Repository")
+		return "", "", errors.New("escapes the Content Repository")
 	}
 
-	var site *url.URL
+	var (
+		site     *url.URL
+		document string
+	)
 	switch {
 	case strings.HasPrefix(target, imagesDir+"/"):
 		site = &url.URL{Path: "/" + target}
 	case kind == linkReference && path.Dir(target) == pagesDir && path.Ext(target) == markdownExt:
 		site = &url.URL{Path: models.PageURL(fileStem(target)), Fragment: u.Fragment}
+		document = target
 	case kind == linkReference && path.Dir(target) == postsDir && path.Ext(target) == markdownExt:
 		site = &url.URL{Path: models.PostURL(fileStem(target)), Fragment: u.Fragment}
+		document = target
 	default:
-		return "", fmt.Errorf("points at %s, which isn't on the site", target)
+		return "", "", fmt.Errorf("points at %s, which isn't on the site", target)
 	}
 	exists, err := x.exists(target)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !exists {
-		return "", fmt.Errorf("points at %s, which is not found", target)
+		return "", "", fmt.Errorf("points at %s, which is not found", target)
 	}
-	return site.String(), nil
+	return site.String(), document, nil
 }
 
 // exists reports whether a reference can point at name: an image in

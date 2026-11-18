@@ -15,6 +15,8 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/dfryer1193/goblog/models"
 )
 
 // markdownExt is the extension of Post and Page files.
@@ -98,6 +100,8 @@ type document struct {
 	// src is the Markdown the AST's segments point into.
 	src []byte
 	doc ast.Node
+	// links are its links to Posts and Pages.
+	links []siteLink
 }
 
 // parseMarkdown parses body, the Markdown of the Content Repository file at
@@ -109,7 +113,30 @@ func parseMarkdown(md goldmark.Markdown, name string, body []byte) (*document, e
 	if err := refs.err(); err != nil {
 		return nil, err
 	}
-	return &document{src: body, doc: doc}, nil
+	return &document{src: body, doc: doc, links: refs.links}, nil
+}
+
+// unlinkMissing turns each of d's links to a Post or Page that isn't onSite
+// into its plain text (keeping any markup inside it), and returns a Warning
+// for each, as from the Content Repository file name.
+func (d *document) unlinkMissing(name string, onSite map[string]bool) []models.Warning {
+	var warnings []models.Warning
+	for _, l := range d.links {
+		if onSite[l.target] {
+			continue
+		}
+		parent := l.node.Parent()
+		for c := l.node.FirstChild(); c != nil; c = l.node.FirstChild() {
+			parent.InsertBefore(parent, l.node, c)
+		}
+		parent.RemoveChild(parent, l.node)
+		warnings = append(warnings, models.Warning{
+			Path:    name,
+			Message: fmt.Sprintf("link %q points at %s, which isn't published, so it's plain text", l.dest, l.target),
+		})
+	}
+	d.links = nil
+	return warnings
 }
 
 // render renders d as HTML.

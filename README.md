@@ -42,6 +42,14 @@ A Post's front matter needs a `title`. Its optional `date` (`YYYY-MM-DD`) is its
 Publish Date. A Post without one, or with one still in the future, is a Draft
 and isn't published. Only the default branch is published.
 
+Relative links and images are rewritten to the site's URLs: `./picluster.md`
+becomes `/posts/picluster/`, `../pages/about.md` becomes `/about/` and
+`../images/rack.png` becomes `/images/rack.png`. A relative link that escapes
+the Content Repository, or points at a missing file or one that isn't on the
+site, is an error, and the Post or Page is skipped. A link to a Post that
+isn't published (a Draft, or a Post or Page skipped for an error) is a
+warning instead: it's shown as plain text until its target publishes.
+
 `site.yaml` must set the site's `title` and its base `url`, e.g.
 `url: https://blog.example.com`. A `site.yaml` without them is invalid, so the
 build fails and a running goblog keeps serving the previous site. Everything
@@ -149,7 +157,8 @@ goblog build -content path/to/content-repository -out public [-drafts]
 The output directory must not exist yet, or be empty. `-drafts` also renders
 Drafts, marked as such. Posts that can't be rendered, such as one with no
 `title`, are reported and skipped. The rest of the site is still written, but
-the command then exits with status 1.
+the command then exits with status 1. Warnings, about things the build worked
+around, are reported too, but on their own the command still succeeds.
 
 
 ## Development

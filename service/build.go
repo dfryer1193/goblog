@@ -3,10 +3,13 @@ package service
 import (
 	"cmp"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/yuin/goldmark"
 
 	"github.com/dfryer1193/goblog/models"
 )
@@ -45,16 +48,24 @@ type siteBuild struct {
 	pages []*models.Page
 	// tags are the tags of posts, sorted by slug.
 	tags []*models.Tag
+	// md is the Markdown converter for Posts and Pages.
+	md goldmark.Markdown
+	// docs are the parsed Markdown of the Posts and Pages, by Content
+	// Repository path, e.g. posts/x.md.
+	docs map[string]*document
 	// out collects the output files.
 	out *output
 	// problems are the files the build skipped so far.
 	problems []models.Problem
+	// warnings are what the build worked around so far.
+	warnings []models.Warning
 }
 
 // buildSteps render the site's output, in order, once the Posts are read.
 // Each adds output files with b.out.page (or to b.out.files directly) and may
 // report Problems.
 var buildSteps = []func(b *siteBuild) error{ //nolint:gochecknoglobals // fixed list of steps
+	renderBodies,
 	renderIndex,
 	renderPostPages,
 	renderPages,
@@ -85,16 +96,16 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	b := &siteBuild{
 		content: content, now: now, opts: opts, settings: settings,
 		tz: tz, today: models.DateOf(now.In(tz)), out: out,
+		md: newMarkdown(content), docs: map[string]*document{},
 	}
 	if problem != nil {
 		b.problems = append(b.problems, *problem)
 	}
 
-	posts, problems, err := readPosts(content, b.today)
+	posts, err := b.readPosts()
 	if err != nil {
 		return nil, err
 	}
-	b.problems = append(b.problems, problems...)
 	b.posts = publishedPosts(posts)
 	if opts.IncludeDrafts {
 		b.posts = posts
@@ -102,12 +113,9 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	slices.SortFunc(b.posts, newestFirst)
 	b.tags = collectTags(b.posts)
 
-	pages, problems, err := readPages(content)
-	if err != nil {
+	if b.pages, err = b.readPages(); err != nil {
 		return nil, err
 	}
-	b.problems = append(b.problems, problems...)
-	b.pages = pages
 	b.out.tree = makeTree(b.posts, b.tags, b.pages, b.out.feed)
 	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
 
@@ -116,7 +124,44 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 			return nil, err
 		}
 	}
-	return &models.Site{Files: b.out.files, Problems: b.problems, Timezone: tz, Today: b.today}, nil
+	return &models.Site{
+		Files: b.out.files, Problems: b.problems, Warnings: b.warnings, Timezone: tz, Today: b.today,
+	}, nil
+}
+
+// renderBodies renders the Markdown of every Post and Page the site shows.
+// A link to a Post or Page that the site doesn't show, such as a Draft (in a
+// build that doesn't include them) or a file skipped for a Problem, is
+// rendered as its plain text, with a Warning.
+func renderBodies(b *siteBuild) error {
+	onSite := map[string]bool{}
+	for _, p := range b.posts {
+		onSite[p.Path] = true
+	}
+	for _, p := range b.pages {
+		onSite[p.Path] = true
+	}
+	render := func(name string) (template.HTML, error) {
+		d := b.docs[name]
+		b.warnings = append(b.warnings, d.unlinkMissing(name, onSite)...)
+		body, err := d.render(b.md)
+		if err != nil {
+			return "", fmt.Errorf("rendering %s: %w", name, err)
+		}
+		return body, nil
+	}
+	var err error
+	for _, p := range b.posts {
+		if p.Body, err = render(p.Path); err != nil {
+			return err
+		}
+	}
+	for _, p := range b.pages {
+		if p.Body, err = render(p.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // renderIndex renders the index: every listed Post, newest first.
