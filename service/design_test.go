@@ -80,3 +80,63 @@ func designRepo() fstest.MapFS {
 		"pages/about.md": "---\ntitle: About me\n---\nHi.\n",
 	})
 }
+
+// designPages are the output pages of designRepo, one of each kind, with the
+// title label their active pane should carry.
+var designPages = []struct{ kind, file, label string }{ //nolint:gochecknoglobals // test table
+	{"index", "index.html", "posts"},
+	{"Post", "posts/picluster/index.html", "picluster.md"},
+	{"tags", "tags/index.html", "tags"},
+	{"tag", "tags/k8s/index.html", "#k8s"},
+	{"Page", "about/index.html", "about.md"},
+	{"404", "404.html", "[no name]"},
+}
+
+func TestEveryPageHasTheTreePaneBesideTheActivePane(t *testing.T) {
+	site := build(t, designRepo(), now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	for _, p := range designPages {
+		t.Run(p.kind, func(t *testing.T) {
+			html := page(t, site, p.file)
+			assertInOrder(t, p.file, html,
+				`<aside class="pane side">`, `<span class="label">tree</span>`, `<div class="tree">`, `</aside>`,
+				`<main class="pane active`, `<span class="label">`+p.label+`</span>`, `</main>`)
+		})
+	}
+}
+
+func TestTreeListsPostsTagsPagesAndTheFeed(t *testing.T) {
+	site := build(t, designRepo(), now, service.BuildOptions{})
+
+	tree := between(t, page(t, site, "tags/index.html"), `<aside class="pane side">`, `</aside>`)
+	assertInOrder(t, "tree", tree,
+		"~/",
+		`├── <a href="/">posts/</a>`,
+		`│   ├── <a href="/posts/picluster/">picluster.md</a>`,
+		`│   └── <a href="/posts/older/">older.md</a>`,
+		`├── <a class="sel" href="/tags/" aria-current="page">tags/</a>`,
+		`│   ├── <a class="tag" href="/tags/k8s/">k8s</a>`,
+		`│   └── <a class="tag" href="/tags/talos/">talos</a>`,
+		`├── <a href="/about/">about.md</a>`,
+		`└── <a href="/feed.xml">feed.xml</a>`)
+
+	post := between(t, page(t, site, "posts/older/index.html"), `<aside class="pane side">`, `</aside>`)
+	assertContains(t, "tree on a Post", post,
+		`└── <a class="sel" href="/posts/older/" aria-current="page">older.md</a>`)
+}
+
+// between returns the part of text from the first start to the end that
+// follows it, failing the test if either is missing.
+func between(t *testing.T, text, start, end string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(text, start)
+	if !ok {
+		t.Fatalf("no %q in:\n%s", start, text)
+	}
+	inner, _, ok := strings.Cut(rest, end)
+	if !ok {
+		t.Fatalf("no %q after %q in:\n%s", end, start, text)
+	}
+	return inner
+}

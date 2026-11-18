@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>tags</h1>
-<ul>
+<ul class="taglist">
 {{- range .Tags}}
 <li><a href="{{.URL}}">#{{.Name}}</a> ({{len .Posts}})</li>
 {{- end}}

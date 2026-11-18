@@ -45,7 +45,7 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 		return nil, nil, fmt.Errorf("reading %s: %w", postsDir, err)
 	}
 
-	md := goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}))
+	md := newMarkdown(content)
 	var (
 		posts    []*models.Post
 		problems []models.Problem
@@ -63,6 +63,11 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 		posts = append(posts, post)
 	}
 	return posts, problems, nil
+}
+
+// newMarkdown is the Markdown converter for Posts and Pages in content.
+func newMarkdown(content fs.FS) goldmark.Markdown {
+	return goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}))
 }
 
 // readPost reads, validates and renders the Post at name.

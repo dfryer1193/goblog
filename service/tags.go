@@ -15,15 +15,16 @@ const tagsSection = "tags"
 // renderTags renders /tags/, listing every tag of the listed Posts with its
 // Post count, and /tags/<tag>/ for each tag, listing its Posts like the
 // index. Only the listed Posts count, so Drafts don't unless the build
-// includes them.
+// includes them (see Build, which collects b.tags).
 func renderTags(b *siteBuild) error {
-	tags := collectTags(b.posts)
-	if err := b.out.page("tags/index.html", "tags", pageData{Title: tagsSection, Tags: tags}); err != nil {
+	data := pageData{Title: tagsSection, Label: tagsSection, Tags: b.tags}
+	if err := b.out.page("tags/index.html", "tags", data); err != nil {
 		return err
 	}
-	for _, tag := range tags {
+	for _, tag := range b.tags {
 		name := "tags/" + models.TagSlug(tag.Name) + "/index.html"
-		if err := b.out.page(name, "tag", pageData{Title: "#" + tag.Name, Tag: tag, Posts: tag.Posts}); err != nil {
+		data = pageData{Title: "#" + tag.Name, Label: "#" + tag.Name, Tag: tag, Posts: tag.Posts}
+		if err := b.out.page(name, "tag", data); err != nil {
 			return fmt.Errorf("rendering tag %s: %w", tag.Name, err)
 		}
 	}

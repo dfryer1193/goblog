@@ -24,15 +24,26 @@ const layoutTemplate = "templates/layout.html"
 var templateFS embed.FS
 
 // pageData is what every page template gets. Each kind of page fills in the
-// fields it needs; output.page fills in Site.
+// fields it needs; output.page fills in the ones every page shares.
 type pageData struct {
 	// Site are the site settings: title, author, description, base URL and
-	// navigation.
+	// navigation. Filled in by output.page.
 	Site *models.SiteSettings
-	// Stylesheet is the stylesheet's site path.
+	// Stylesheet is the stylesheet's site path. Filled in by output.page.
 	Stylesheet string
+	// Path is the page's own site path, e.g. /posts/x/. Filled in by
+	// output.page.
+	Path string
+	// Tree is the tree pane, with this page's entry selected. Filled in by
+	// output.page.
+	Tree []treeLine
+
 	// Title is the page's own title. Empty means the site's title.
 	Title string
+	// Label is the title label of the active pane, e.g. "picluster.md".
+	Label string
+	// NotFound marks the 404 page, whose active pane is red.
+	NotFound bool
 	// Posts are the Posts a listing page shows, in display order.
 	Posts []*models.Post
 	// Post is the Post a Post page shows.
@@ -57,8 +68,10 @@ type output struct {
 	settings *models.SiteSettings
 	// stylesheet is passed to every page as pageData.Stylesheet.
 	stylesheet string
-	templates  map[string]*template.Template
-	files      map[string][]byte
+	// tree is the tree pane, with nothing selected.
+	tree      []treeLine
+	templates map[string]*template.Template
+	files     map[string][]byte
 }
 
 func newOutput(settings *models.SiteSettings) (*output, error) {
@@ -96,6 +109,8 @@ func (o *output) page(name, kind string, data pageData) error {
 	}
 	data.Site = o.settings
 	data.Stylesheet = o.stylesheet
+	data.Path = sitePath(name)
+	data.Tree = treeFor(o.tree, data.Path)
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)

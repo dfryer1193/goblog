@@ -179,7 +179,6 @@ ul.tags li { display: inline; margin-right: 1ch; }
 .posts p { grid-column: 2; margin: 0; color: #aaaaaa; }
 .posts ul.tags { grid-column: 2; }
 .posts ul.tags a { color: var(--dim); }
-.taglist .count { color: var(--dim); }
 .error-text { color: var(--red); font-weight: 700; }
 
 /* Markdown bodies. */

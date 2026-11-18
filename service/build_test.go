@@ -252,7 +252,7 @@ func TestPublishedPostAppearsOnIndexAndHasItsOwnPage(t *testing.T) {
 
 	assertNoProblems(t, site)
 	index := page(t, site, "index.html")
-	assertContains(t, "index", index, `<a href="/posts/picluster/">Building a Pi cluster</a>`)
+	assertContains(t, "index", index, `href="/posts/picluster/">Building a Pi cluster</a>`)
 	assertContains(t, "index", index, "2026.01.05")
 
 	post := page(t, site, "posts/picluster/index.html")
