@@ -61,7 +61,7 @@ func readPages(content fs.FS) ([]*models.Page, []models.Problem, error) {
 // renderPages renders each Page at /<name>/.
 func renderPages(b *siteBuild) error {
 	for _, p := range b.pages {
-		data := pageData{Title: p.Title, Label: p.Name + markdownExt, Page: p}
+		data := pageData{Title: p.Title, Label: p.Name + markdownExt, WindowTitle: p.Name + markdownExt, Page: p}
 		if err := b.out.page(p.Name+"/index.html", "page", data); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}

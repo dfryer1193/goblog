@@ -102,6 +102,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	b.problems = append(b.problems, problems...)
 	b.pages = pages
 	b.out.tree = makeTree(b.posts, b.tags, b.pages)
+	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
 
 	for _, step := range buildSteps {
 		if err = step(b); err != nil {
@@ -113,14 +114,14 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 
 // renderIndex renders the index: every listed Post, newest first.
 func renderIndex(b *siteBuild) error {
-	return b.out.page("index.html", "index", pageData{Label: postsWindow, Posts: b.posts})
+	return b.out.page("index.html", "index", pageData{Label: postsWindow, WindowTitle: "index", Posts: b.posts})
 }
 
 // renderPostPages renders one page per listed Post, at /posts/<slug>/.
 func renderPostPages(b *siteBuild) error {
 	for _, p := range b.posts {
 		if err := b.out.page("posts/"+p.Slug+"/index.html", "post", pageData{
-			Title: p.Title, Label: p.Slug + markdownExt, Post: p,
+			Title: p.Title, Label: p.Slug + markdownExt, WindowTitle: p.Slug + markdownExt, Post: p,
 		}); err != nil {
 			return fmt.Errorf("rendering %s: %w", p.Path, err)
 		}

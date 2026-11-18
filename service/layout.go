@@ -1,7 +1,9 @@
 package service
 
 import (
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/dfryer1193/goblog/models"
 )
@@ -93,4 +95,85 @@ func sitePath(name string) string {
 		return "/" + dir + "/"
 	}
 	return "/" + name
+}
+
+// defaultHost is the status bar's host when site.yaml has no url.
+const defaultHost = "goblog"
+
+// buildInfo is what the status bar and the info line say about the build.
+type buildInfo struct {
+	// Date and Time are the render time in the site's timezone, as
+	// YYYY.MM.DD and HH:MM.
+	Date, Time string
+	// Host is the first DNS label of the site's URL, e.g. "blog" for
+	// https://blog.example.com, or "goblog" if it has none.
+	Host string
+	// Commit is the short hash of the Content Repository commit rendered,
+	// or "" if it's unknown.
+	Commit string
+}
+
+// shortCommitLen is how many hex digits of the commit the info line shows.
+const shortCommitLen = 7
+
+// newBuildInfo describes a build rendered at now, in the site's timezone, of
+// the given commit.
+func newBuildInfo(now time.Time, tz *time.Location, siteURL, commit string) buildInfo {
+	host := defaultHost
+	if u, err := url.Parse(siteURL); err == nil && u.Hostname() != "" {
+		host, _, _ = strings.Cut(u.Hostname(), ".")
+	}
+	local := now.In(tz)
+	return buildInfo{
+		Date:   local.Format("2006.01.02"),
+		Time:   local.Format("15:04"),
+		Host:   host,
+		Commit: commit[:min(len(commit), shortCommitLen)],
+	}
+}
+
+// window is one status bar window: a navigation entry.
+type window struct {
+	// Index is the window's number, from 0.
+	Index int
+	// Name and Link are the navigation entry's.
+	Name, Link string
+	// Current reports whether the page being shown belongs to the window.
+	Current bool
+	// Title is the window's #T, the page's name within the window, when
+	// it's current.
+	Title string
+}
+
+// windowsFor lays out the status bar windows for a page. The first window
+// the page belongs to is current; see belongsTo.
+func windowsFor(nav []models.NavLink, data *pageData) []window {
+	windows := make([]window, len(nav))
+	found := false
+	for i, link := range nav {
+		windows[i] = window{Index: i, Name: link.Name, Link: link.Link}
+		if !found && belongsTo(link, data) {
+			found = true
+			windows[i].Current = true
+			windows[i].Title = data.WindowTitle
+		}
+	}
+	return windows
+}
+
+// belongsTo reports whether the page belongs to the navigation entry link:
+// Post pages belong to the posts window; another page belongs to the entry
+// that links to it, or to a section (a link ending in "/") that holds it.
+// The 404 page belongs to no window.
+func belongsTo(link models.NavLink, data *pageData) bool {
+	switch {
+	case data.NotFound:
+		return false
+	case data.Post != nil:
+		return link.Name == postsWindow
+	case link.Link == data.Path:
+		return true
+	default:
+		return link.Link != "/" && strings.HasSuffix(link.Link, "/") && strings.HasPrefix(data.Path, link.Link)
+	}
 }

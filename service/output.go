@@ -37,11 +37,19 @@ type pageData struct {
 	// Tree is the tree pane, with this page's entry selected. Filled in by
 	// output.page.
 	Tree []treeLine
+	// Windows are the status bar's windows. Filled in by output.page.
+	Windows []window
+	// Build is the build's date, time, host and commit. Filled in by
+	// output.page.
+	Build buildInfo
 
 	// Title is the page's own title. Empty means the site's title.
 	Title string
 	// Label is the title label of the active pane, e.g. "picluster.md".
 	Label string
+	// WindowTitle is the page's #T in its status bar window, e.g.
+	// "picluster.md" in the posts window.
+	WindowTitle string
 	// NotFound marks the 404 page, whose active pane is red.
 	NotFound bool
 	// Posts are the Posts a listing page shows, in display order.
@@ -69,7 +77,9 @@ type output struct {
 	// stylesheet is passed to every page as pageData.Stylesheet.
 	stylesheet string
 	// tree is the tree pane, with nothing selected.
-	tree      []treeLine
+	tree []treeLine
+	// build is passed to every page as pageData.Build.
+	build     buildInfo
 	templates map[string]*template.Template
 	files     map[string][]byte
 }
@@ -111,6 +121,8 @@ func (o *output) page(name, kind string, data pageData) error {
 	data.Stylesheet = o.stylesheet
 	data.Path = sitePath(name)
 	data.Tree = treeFor(o.tree, data.Path)
+	data.Windows = windowsFor(o.settings.Nav, &data)
+	data.Build = o.build
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)

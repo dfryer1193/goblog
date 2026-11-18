@@ -28,9 +28,9 @@ func TestSiteSettingsTitleAndNavigationAppearOnEveryPage(t *testing.T) {
 			t,
 			name,
 			text,
-			`<a href="/">posts</a>`,
-			`<a href="/tags/">tags</a>`,
-			`<a href="/about/">about</a>`,
+			`href="/" aria-current="page"><span class="wi">0</span><span class="wn">posts:`,
+			`href="/tags/">1 tags</a>`,
+			`href="/about/">2 about</a>`,
 		)
 	}
 	assertContains(t, "post", page(t, site, "posts/x/index.html"), "<title>X · Werewolf Notes</title>")
@@ -47,7 +47,7 @@ func TestMissingSiteSettingsIsAProblemButTheSiteBuildsWithDefaults(t *testing.T)
 	}
 	index := page(t, site, "index.html")
 	assertContains(t, "index", index, "<title>goblog</title>")
-	assertInOrder(t, "index", index, `<a href="/">posts</a>`, `<a href="/tags/">tags</a>`, ">X<")
+	assertInOrder(t, "index", index, `<span class="wn">posts:index</span>`, `href="/tags/">1 tags</a>`, ">X<")
 }
 
 func TestInvalidSiteSettingsFailTheBuild(t *testing.T) {

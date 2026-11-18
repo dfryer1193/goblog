@@ -16,12 +16,16 @@
 <div class="frame">
 <header class="tbar">
 <details class="ham"><summary aria-label="files">☰</summary><nav class="drawer" aria-label="files">{{template "tree" .}}</nav></details>
-<a class="sess" href="/">[{{.Site.Title}}]</a>
+<span class="sess">[{{.Site.Title}}]</span><span class="sep">//</span>
 <nav class="wins" aria-label="site">
-{{- range .Site.Nav}}
-<a href="{{.Link}}">{{.Name}}</a>
-{{- end}}
+{{- range .Windows}}
+{{- if .Current}}<a class="win cur" href="{{.Link}}" aria-current="page"><span class="wi">{{.Index}}</span><span class="wn">{{.Name}}:{{.Title}}</span></a>
+{{- else}}<a class="win" href="{{.Link}}">{{.Index}} {{.Name}}</a>
+{{- end}}<span class="sep">//</span>
+{{- end -}}
 </nav>
+<span class="grow"></span>
+<span class="right"><span class="sep">//</span>{{.Build.Date}}<span class="sep">//</span>{{.Build.Time}}<span class="sep">//</span>{{.Build.Host}}<span class="sep">//</span></span>
 </header>
 <div class="panes">
 <aside class="pane side"><span class="label">tree</span>{{template "tree" .}}</aside>
