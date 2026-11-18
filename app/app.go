@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,7 +42,14 @@ const (
 	EnvWorkDir = "GOBLOG_WORK_DIR"
 	// EnvPort is the port to listen on. Default: 8080.
 	EnvPort = "PORT"
+	// EnvWebhookSecret is the GitHub webhook's secret. Optional; without
+	// it, the webhook endpoint is disabled (404).
+	EnvWebhookSecret = "GOBLOG_WEBHOOK_SECRET" //nolint:gosec // the variable's name, not a secret
 )
+
+// syncTimeout bounds each background sync, so a hung fetch can't hold up
+// every later one.
+const syncTimeout = 5 * time.Minute
 
 // defaultPort is the port goblog listens on when PORT isn't set.
 const defaultPort = "8080"
@@ -70,6 +78,9 @@ type Config struct {
 	WorkDir string
 	// Port is the port to listen on.
 	Port string
+	// WebhookSecret is the GitHub webhook's secret, or empty to disable the
+	// webhook endpoint.
+	WebhookSecret string
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
@@ -91,6 +102,7 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		KnownHosts:    get(EnvKnownHosts, ""),
 		WorkDir:       get(EnvWorkDir, filepath.Join(os.TempDir(), "goblog")),
 		Port:          get(EnvPort, defaultPort),
+		WebhookSecret: get(EnvWebhookSecret, ""),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
@@ -103,6 +115,9 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 type App struct {
 	publisher *service.Publisher
 	router    *router.Router
+	logger    *slog.Logger
+	// webhookSyncs runs the syncs webhooks ask for.
+	webhookSyncs *trigger
 }
 
 // New wires up serve mode from cfg. It doesn't sync: the site is served, and
@@ -124,11 +139,16 @@ func New(cfg Config) (*App, error) {
 		Now:        cfg.Now,
 		Logger:     log.GetLogger("publish"),
 	})
-	r, err := api.NewRouter(publisher)
+	a := &App{publisher: publisher, logger: log.GetLogger("sync")}
+	if cfg.WebhookSecret == "" {
+		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
+	}
+	a.webhookSyncs = &trigger{run: a.backgroundSync}
+	a.router, err = api.NewRouter(publisher, api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire})
 	if err != nil {
 		return nil, fmt.Errorf("building the HTTP handler: %w", err)
 	}
-	return &App{publisher: publisher, router: r}, nil
+	return a, nil
 }
 
 // Router is serve mode's HTTP handler, as mjolnir's router so main can Run
@@ -150,6 +170,21 @@ func (a *App) Sync(ctx context.Context) error {
 		return fmt.Errorf("syncing: %w", err)
 	}
 	return nil
+}
+
+// WaitForSyncs waits until the syncs that webhooks asked for have finished.
+func (a *App) WaitForSyncs() {
+	a.webhookSyncs.wait()
+}
+
+// backgroundSync is one Sync on nobody's behalf: it logs a failure instead of
+// returning it.
+func (a *App) backgroundSync() {
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
+	if err := a.Sync(ctx); err != nil {
+		a.logger.Error("Sync failed; still serving the previous site", "error", err)
+	}
 }
 
 // sshAuth is the SSH auth for cfg's deploy key, or nil without one.

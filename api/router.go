@@ -28,8 +28,9 @@ type Site interface {
 }
 
 // NewRouter builds goblog's HTTP handler: mjolnir's router, with its probes
-// (/livez, /readyz and /startupz), serving site's files.
-func NewRouter(site Site) (*router.Router, error) {
+// (/livez, /readyz and /startupz), the webhook endpoint at WebhookPath, and
+// site's files.
+func NewRouter(site Site, hook Webhook) (*router.Router, error) {
 	r, err := router.New(router.Config{
 		Health: health.Config{
 			Started: health.AlwaysStarted,
@@ -40,6 +41,7 @@ func NewRouter(site Site) (*router.Router, error) {
 		return nil, fmt.Errorf("building router: %w", err)
 	}
 
+	r.Handle(WebhookPath, webhookHandler{hook: hook})
 	files := fileHandler{site: site}
 	r.Handle("/*", files)
 	return r, nil

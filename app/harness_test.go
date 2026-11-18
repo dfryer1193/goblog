@@ -11,6 +11,10 @@ package app_test
 //	resp := g.get(t, "/posts/x/")
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"maps"
 	"net/http"
@@ -32,6 +36,9 @@ import (
 // defaultBranch is the test Content Repository's default branch. It isn't
 // "main" or "master", so a clone that guessed the branch would fail.
 const defaultBranch = "trunk"
+
+// webhookSecret is the webhook secret startGoblog configures by default.
+const webhookSecret = "test-webhook-secret"
 
 // startTime is where the test clock starts: 2026-03-10 15:00 UTC.
 func startTime() time.Time {
@@ -157,15 +164,16 @@ type goblog struct {
 
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
-// GOBLOG_CONTENT_URL is repo's file:// URL and GOBLOG_WORK_DIR a temporary
-// directory. The clock starts at startTime. goblog hasn't synced yet: call
+// GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
+// directory and GOBLOG_WEBHOOK_SECRET webhookSecret. The clock starts at startTime. goblog hasn't synced yet: call
 // sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
 	workDir := t.TempDir()
 	vars := map[string]string{
-		"GOBLOG_CONTENT_URL": repo.url(),
-		"GOBLOG_WORK_DIR":    workDir,
+		"GOBLOG_CONTENT_URL":    repo.url(),
+		"GOBLOG_WORK_DIR":       workDir,
+		"GOBLOG_WEBHOOK_SECRET": webhookSecret,
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -230,6 +238,43 @@ func (g *goblog) get(t *testing.T, path string) response {
 		t.Fatalf("reading body of %s: %v", path, err)
 	}
 	return response{status: resp.StatusCode, header: resp.Header, body: string(body)}
+}
+
+// sign is GitHub's X-Hub-Signature-256 value for body under secret.
+func sign(secret, body string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// webhook delivers a GitHub webhook event with body, signed with signature
+// (no X-Hub-Signature-256 header if it's empty), and returns the response.
+func (g *goblog) webhook(t *testing.T, event, body, signature string) response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		g.srv.URL+"/webhook",
+		bytes.NewBufferString(body),
+	)
+	if err != nil {
+		t.Fatalf("building webhook request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Github-Event", event)
+	if signature != "" {
+		req.Header.Set("X-Hub-Signature-256", signature)
+	}
+	resp, err := g.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST /webhook: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading webhook response: %v", err)
+	}
+	return response{status: resp.StatusCode, header: resp.Header, body: string(respBody)}
 }
 
 // assertStatus fails the test unless resp has status want.
