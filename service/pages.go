@@ -115,8 +115,8 @@ var reservedPaths = map[string]bool{ //nolint:gochecknoglobals // fixed set
 	// Rendered from the Content Repository.
 	"index.html": true, postsDir: true, tagsSection: true, "images": true,
 	"feed.xml": true, "sitemap.xml": true, "404.html": true,
-	// Room for the stylesheet, fonts and other static files.
-	"static": true, "assets": true, "css": true, "fonts": true, "js": true,
+	// The stylesheet, fonts and their licences, and room for more.
+	"static": true, assetsSection: true, "css": true, "fonts": true, "js": true, licensesSection: true,
 	"favicon.ico": true, "robots.txt": true,
 	// Served by goblog itself: mjolnir's probes and the webhook.
 	"livez": true, "readyz": true, "startupz": true, "webhook": true,

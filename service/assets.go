@@ -12,25 +12,34 @@ import (
 	"text/template"
 )
 
-// staticDir is the site section holding the stylesheet, fonts and other
-// files that come with goblog rather than from the Content Repository.
+// staticDir is the folder of staticFS holding the files that come with
+// goblog rather than from the Content Repository. Its subfolders are site
+// sections: static/fonts/x.woff2 is served under /fonts/.
 const staticDir = "static"
 
 // stylesheetSource is the stylesheet template in staticFS. {{asset "x"}} in
-// it is the site path of staticFS's static/x.
+// it is the site path of staticFS's static/x. It's served under /assets/.
 const stylesheetSource = "static/style.css"
 
-// staticFS holds the static assets: the stylesheet and the fonts with their
+// assetsSection is the site section holding the stylesheet.
+const assetsSection = "assets"
+
+// licensesSection is the site section holding the licences of the static
+// files. They're the only static files served under their own names, so
+// they mustn't go in a section that's cached for good.
+const licensesSection = "licenses"
+
+// staticFS holds the static assets: the stylesheet and the fonts, with their
 // licence.
 //
 //go:embed static
 var staticFS embed.FS
 
-// assets are the static files every site gets. Their names carry a hash of
-// their contents, so a changed file gets a new URL and each URL can be cached
-// for good.
+// assets are the static files every site gets. Apart from the licences,
+// their names carry a hash of their contents, so a changed file gets a new
+// URL, and the server can let clients cache /assets/ and /fonts/ for good.
 type assets struct {
-	// Stylesheet is the stylesheet's site path, e.g. /static/style.0123abcd.css.
+	// Stylesheet is the stylesheet's site path, e.g. /assets/style.0123abcd45.css.
 	Stylesheet string
 	// files are the output files, by output path.
 	files map[string][]byte
@@ -54,7 +63,13 @@ func makeAssets() (*assets, error) {
 		if rerr != nil {
 			return fmt.Errorf("reading %s: %w", name, rerr)
 		}
-		paths[strings.TrimPrefix(name, staticDir+"/")] = a.add(path.Base(name), data)
+		rel := strings.TrimPrefix(name, staticDir+"/")
+		if path.Dir(rel) == licensesSection {
+			a.files[rel] = data
+			paths[rel] = "/" + rel
+			return nil
+		}
+		paths[rel] = a.add(rel, data)
 		return nil
 	})
 	if err != nil {
@@ -81,16 +96,16 @@ func makeAssets() (*assets, error) {
 	if err = tmpl.Execute(&css, nil); err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", stylesheetSource, err)
 	}
-	a.Stylesheet = a.add(path.Base(stylesheetSource), []byte(css.String()))
+	a.Stylesheet = a.add(path.Join(assetsSection, path.Base(stylesheetSource)), []byte(css.String()))
 	return a, nil
 }
 
-// add adds data as the static file called name, with a hash of data
-// inserted before its extension, and returns its site path.
+// add adds data as the output file name, with a hash of data inserted before
+// its extension, and returns its site path.
 func (a *assets) add(name string, data []byte) string {
 	sum := sha256.Sum256(data)
 	ext := path.Ext(name)
-	versioned := path.Join(staticDir, strings.TrimSuffix(name, ext)+"."+hex.EncodeToString(sum[:5])+ext)
+	versioned := strings.TrimSuffix(name, ext) + "." + hex.EncodeToString(sum[:5]) + ext
 	a.files[versioned] = data
 	return "/" + versioned
 }

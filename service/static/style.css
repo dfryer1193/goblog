@@ -1,6 +1,6 @@
 /* goblog's tmux design. Colours are the author's alacritty palette; the status
    bar follows their .tmux.conf. JetBrains Mono is licensed under the SIL Open
-   Font License 1.1: {{asset "fonts/OFL.txt"}} */
+   Font License 1.1: {{asset "licenses/JetBrainsMono-OFL.txt"}} */
 
 @font-face {
   font-family: "JetBrains Mono";

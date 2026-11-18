@@ -11,7 +11,7 @@ import (
 )
 
 // stylesheetLink matches the layout's stylesheet link, capturing its path.
-var stylesheetLink = regexp.MustCompile(`<link rel="stylesheet" href="/(static/[^"]+\.css)">`)
+var stylesheetLink = regexp.MustCompile(`<link rel="stylesheet" href="/(assets/[^"]+\.css)">`)
 
 // stylesheet returns the path and text of the stylesheet the page links to.
 func stylesheet(t *testing.T, site *models.Site, html string) (string, string) {
@@ -27,10 +27,10 @@ func TestStylesheetAndFontsAreSelfHostedWithVersionedNames(t *testing.T) {
 	site := build(t, contentRepo(nil), now, service.BuildOptions{})
 
 	cssPath, css := stylesheet(t, site, page(t, site, "index.html"))
-	if !regexp.MustCompile(`^static/style\.[0-9a-f]{8,}\.css$`).MatchString(cssPath) {
+	if !regexp.MustCompile(`^assets/style\.[0-9a-f]{8,}\.css$`).MatchString(cssPath) {
 		t.Errorf("stylesheet %s has no content hash in its name", cssPath)
 	}
-	fonts := regexp.MustCompile(`url\("/(static/JetBrainsMono-(\w+)\.[0-9a-f]{8,}\.woff2)"\)`).
+	fonts := regexp.MustCompile(`url\("/(fonts/JetBrainsMono-(\w+)\.[0-9a-f]{8,}\.woff2)"\)`).
 		FindAllStringSubmatch(css, -1)
 	var styles []string
 	for _, f := range fonts {
@@ -44,7 +44,7 @@ func TestStylesheetAndFontsAreSelfHostedWithVersionedNames(t *testing.T) {
 	}
 	assertContains(t, "stylesheet", css, `font-family: "JetBrains Mono"`)
 
-	licence := regexp.MustCompile(`/(static/OFL\.[0-9a-f]{8,}\.txt)`).FindStringSubmatch(css)
+	licence := regexp.MustCompile(`/(licenses/JetBrainsMono-OFL\.txt)`).FindStringSubmatch(css)
 	if licence == nil {
 		t.Fatalf("stylesheet doesn't point at the font licence:\n%s", css)
 	}
@@ -194,4 +194,22 @@ func TestStatusBarHostIsGoblogWhenTheSiteHasNoURL(t *testing.T) {
 
 	assertContains(t, "status bar", page(t, site, "index.html"),
 		`<span class="right">`+sep+"2026.03.10"+sep+"15:00"+sep+"goblog"+sep+"</span>")
+}
+
+func TestEveryFileUnderAssetsAndFontsHasAContentHashInItsName(t *testing.T) {
+	site := build(t, designRepo(), now, service.BuildOptions{})
+
+	hashed := regexp.MustCompile(`^(assets|fonts)/[^/]+\.[0-9a-f]{10}\.[a-z0-9]+$`)
+	n := 0
+	for _, name := range site.Paths() {
+		if strings.HasPrefix(name, "assets/") || strings.HasPrefix(name, "fonts/") {
+			n++
+			if !hashed.MatchString(name) {
+				t.Errorf("%s is cached for good but has no content hash in its name", name)
+			}
+		}
+	}
+	if n != 4 {
+		t.Errorf("got %d files under assets/ and fonts/, want the stylesheet and three fonts", n)
+	}
 }
