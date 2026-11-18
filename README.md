@@ -5,10 +5,10 @@ repository, the Content Repository, and goblog publishes them with no manual
 publishing step.
 
 > **Status:** goblog is being rebuilt from scratch. Right now the server
-> clones the Content Repository once at startup and serves its Posts, Pages
-> and tags as plain, unstyled HTML, and `goblog build` renders them the same
-> way locally. The previous implementation is kept under the `legacy` tag for
-> reference.
+> clones the Content Repository, keeps it in sync through the webhook and
+> polling, and serves its Posts, Pages and tags as plain, unstyled HTML, and
+> `goblog build` renders them the same way locally. The previous
+> implementation is kept under the `legacy` tag for reference.
 
 ## How it works
 
@@ -60,6 +60,8 @@ The server is configured from the environment:
 | `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys             | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
 | `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
+| `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
+| `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
 The container image has no `known_hosts` file, so set `GOBLOG_SSH_KNOWN_HOSTS`
 when you use a deploy key.
@@ -68,6 +70,34 @@ At startup goblog makes a shallow, single-branch clone of the Content
 Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
 renders the site into a fresh directory there and switches serving over to it.
 Until that first render, `/readyz` reports not ready. Unknown paths get a 404.
+
+### Keeping the site in sync
+
+Two triggers keep the site up to date. They never render at the same time:
+one waits for the other.
+
+- **The webhook.** Add a GitHub webhook to the Content Repository with the
+  payload URL `https://<your-site>/webhook`, content type
+  `application/json`, the secret from `GOBLOG_WEBHOOK_SECRET` and just the
+  `push` event. goblog checks each delivery's `X-Hub-Signature-256` and
+  answers 401 to one without a valid signature. A `push` gets 202 straight
+  away, and goblog fetches and renders in the background. Pushes that arrive
+  during a sync cause one more sync after it. A `ping` gets 204. Without
+  `GOBLOG_WEBHOOK_SECRET`, `/webhook` answers 404 and goblog logs at startup
+  that only polling will sync.
+- **The poll.** Every `GOBLOG_POLL_INTERVAL`, goblog asks the remote for the
+  branch's latest commit (like `git ls-remote`, with no fetch) and fetches and
+  renders only if it has changed. That catches pushes whose webhook was lost,
+  or that reached another replica. If the date in the site's timezone
+  (`timezone` in `site.yaml`, UTC by default) has changed since the last
+  render, the poll renders the same commit again without fetching, so Posts
+  scheduled for the new day publish on time, even if the remote is
+  unreachable. Until the first render succeeds, each poll retries the full
+  sync.
+
+A sync or render that fails is logged, and the previous site keeps serving. A
+commit that can't be rendered isn't retried until the next commit or the
+next day.
 
 goblog logs to stdout only. mjolnir's JSON log file (`logs/mjolnir.jsonl` by
 default) is turned off, because the image's working directory may not be
@@ -93,7 +123,6 @@ Drafts, marked as such. Posts that can't be rendered, such as one with no
 `title`, are reported and skipped. The rest of the site is still written, but
 the command then exits with status 1.
 
-The webhook and the poll that keep the site up to date are still to be built.
 
 ## Development
 

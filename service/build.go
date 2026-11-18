@@ -94,7 +94,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 			return nil, err
 		}
 	}
-	return &models.Site{Files: b.out.files, Problems: b.problems}, nil
+	return &models.Site{Files: b.out.files, Problems: b.problems, Timezone: tz, Today: b.today}, nil
 }
 
 // renderIndex renders the index: every listed Post, newest first.

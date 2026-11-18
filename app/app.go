@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,10 +42,25 @@ const (
 	EnvWorkDir = "GOBLOG_WORK_DIR"
 	// EnvPort is the port to listen on. Default: 8080.
 	EnvPort = "PORT"
+	// EnvWebhookSecret is the GitHub webhook's secret. Optional; without
+	// it, the webhook endpoint is disabled (404).
+	EnvWebhookSecret = "GOBLOG_WEBHOOK_SECRET" //nolint:gosec // the variable's name, not a secret
+	// EnvPollInterval is how often to check the Content Repository for a
+	// new commit and the date for a rollover, as a Go duration such as
+	// "1m" or "30s". Default: 1m.
+	EnvPollInterval = "GOBLOG_POLL_INTERVAL"
 )
+
+// syncTimeout bounds each background sync, so a hung fetch can't hold up
+// every later one.
+const syncTimeout = 5 * time.Minute
 
 // defaultPort is the port goblog listens on when PORT isn't set.
 const defaultPort = "8080"
+
+// defaultPollInterval is how often goblog polls when GOBLOG_POLL_INTERVAL
+// isn't set.
+const defaultPollInterval = time.Minute
 
 // sshUser is the user for SSH Content Repository URLs that don't name one.
 const sshUser = "git"
@@ -70,6 +86,11 @@ type Config struct {
 	WorkDir string
 	// Port is the port to listen on.
 	Port string
+	// WebhookSecret is the GitHub webhook's secret, or empty to disable the
+	// webhook endpoint.
+	WebhookSecret string
+	// PollInterval is how often Run polls.
+	PollInterval time.Duration
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
@@ -91,10 +112,16 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		KnownHosts:    get(EnvKnownHosts, ""),
 		WorkDir:       get(EnvWorkDir, filepath.Join(os.TempDir(), "goblog")),
 		Port:          get(EnvPort, defaultPort),
+		WebhookSecret: get(EnvWebhookSecret, ""),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
 	}
+	interval, err := time.ParseDuration(get(EnvPollInterval, defaultPollInterval.String()))
+	if err != nil || interval <= 0 {
+		return Config{}, fmt.Errorf("%s must be a positive duration such as 1m or 30s", EnvPollInterval)
+	}
+	cfg.PollInterval = interval
 	return cfg, nil
 }
 
@@ -103,6 +130,11 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 type App struct {
 	publisher *service.Publisher
 	router    *router.Router
+	logger    *slog.Logger
+	// pollInterval is how often Run polls.
+	pollInterval time.Duration
+	// webhookSyncs runs the syncs webhooks ask for.
+	webhookSyncs *trigger
 }
 
 // New wires up serve mode from cfg. It doesn't sync: the site is served, and
@@ -124,11 +156,16 @@ func New(cfg Config) (*App, error) {
 		Now:        cfg.Now,
 		Logger:     log.GetLogger("publish"),
 	})
-	r, err := api.NewRouter(publisher)
+	a := &App{publisher: publisher, logger: log.GetLogger("sync"), pollInterval: cfg.PollInterval}
+	if cfg.WebhookSecret == "" {
+		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
+	}
+	a.webhookSyncs = &trigger{run: a.backgroundSync}
+	a.router, err = api.NewRouter(publisher, api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire})
 	if err != nil {
 		return nil, fmt.Errorf("building the HTTP handler: %w", err)
 	}
-	return &App{publisher: publisher, router: r}, nil
+	return a, nil
 }
 
 // Router is serve mode's HTTP handler, as mjolnir's router so main can Run
@@ -150,6 +187,76 @@ func (a *App) Sync(ctx context.Context) error {
 		return fmt.Errorf("syncing: %w", err)
 	}
 	return nil
+}
+
+// Poll is the periodic check: it syncs if the Content Repository has a new
+// commit, or if there's no site yet, and otherwise does nothing. It runs one
+// at a time with Sync.
+func (a *App) Poll(ctx context.Context) (service.PollResult, error) {
+	result, err := a.publisher.Poll(ctx)
+	if err != nil {
+		return result, fmt.Errorf("polling: %w", err)
+	}
+	return result, nil
+}
+
+// Run keeps the site in sync until ctx is done: a first Sync straight away,
+// then a Poll every poll interval, which also retries a failed first Sync.
+// Failures are logged, and the previous site stays.
+func (a *App) Run(ctx context.Context) {
+	a.backgroundSync()
+	ticker := time.NewTicker(a.pollInterval)
+	defer ticker.Stop()
+	a.pollEvery(ctx, ticker.C)
+}
+
+// pollEvery polls on every tick until ctx is done.
+func (a *App) pollEvery(ctx context.Context, ticks <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			a.backgroundPoll(ctx)
+		}
+	}
+}
+
+// backgroundPoll is one Poll on nobody's behalf: it logs what happened
+// instead of returning it.
+func (a *App) backgroundPoll(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, syncTimeout)
+	defer cancel()
+	result, err := a.Poll(ctx)
+	if err != nil {
+		a.logger.ErrorContext(
+			ctx,
+			"Poll failed; still serving the previous site",
+			"result",
+			result.String(),
+			"error",
+			err,
+		)
+		return
+	}
+	if result != service.PollUnchanged {
+		a.logger.InfoContext(ctx, "Poll updated the site", "result", result.String())
+	}
+}
+
+// WaitForSyncs waits until the syncs that webhooks asked for have finished.
+func (a *App) WaitForSyncs() {
+	a.webhookSyncs.wait()
+}
+
+// backgroundSync is one Sync on nobody's behalf: it logs a failure instead of
+// returning it.
+func (a *App) backgroundSync() {
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
+	if err := a.Sync(ctx); err != nil {
+		a.logger.Error("Sync failed; still serving the previous site", "error", err)
+	}
 }
 
 // sshAuth is the SSH auth for cfg's deploy key, or nil without one.

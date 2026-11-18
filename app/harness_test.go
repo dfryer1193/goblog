@@ -11,6 +11,10 @@ package app_test
 //	resp := g.get(t, "/posts/x/")
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"maps"
 	"net/http"
@@ -27,11 +31,15 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/dfryer1193/goblog/app"
+	"github.com/dfryer1193/goblog/service"
 )
 
 // defaultBranch is the test Content Repository's default branch. It isn't
 // "main" or "master", so a clone that guessed the branch would fail.
 const defaultBranch = "trunk"
+
+// webhookSecret is the webhook secret startGoblog configures by default.
+const webhookSecret = "test-webhook-secret"
 
 // startTime is where the test clock starts: 2026-03-10 15:00 UTC.
 func startTime() time.Time {
@@ -146,6 +154,20 @@ func (c *testClock) Now() time.Time {
 	return c.now
 }
 
+// set moves the clock to at.
+func (c *testClock) set(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = at
+}
+
+// advance moves the clock on by d.
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
 // goblog is a running goblog under test.
 type goblog struct {
 	app   *app.App
@@ -157,15 +179,16 @@ type goblog struct {
 
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
-// GOBLOG_CONTENT_URL is repo's file:// URL and GOBLOG_WORK_DIR a temporary
-// directory. The clock starts at startTime. goblog hasn't synced yet: call
+// GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
+// directory and GOBLOG_WEBHOOK_SECRET webhookSecret. The clock starts at startTime. goblog hasn't synced yet: call
 // sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
 	workDir := t.TempDir()
 	vars := map[string]string{
-		"GOBLOG_CONTENT_URL": repo.url(),
-		"GOBLOG_WORK_DIR":    workDir,
+		"GOBLOG_CONTENT_URL":    repo.url(),
+		"GOBLOG_WORK_DIR":       workDir,
+		"GOBLOG_WEBHOOK_SECRET": webhookSecret,
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -201,6 +224,19 @@ func (g *goblog) syncFails(t *testing.T) {
 	t.Helper()
 	if err := g.app.Sync(t.Context()); err == nil {
 		t.Fatal("sync succeeded, want it to fail")
+	}
+}
+
+// poll runs one poll now and fails the test if it fails or does something
+// other than want.
+func (g *goblog) poll(t *testing.T, want service.PollResult) {
+	t.Helper()
+	got, err := g.app.Poll(t.Context())
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if got != want {
+		t.Fatalf("poll = %v, want %v", got, want)
 	}
 }
 
@@ -249,6 +285,43 @@ func (g *goblog) request(t *testing.T, method, path string, header http.Header) 
 		t.Fatalf("reading body of %s: %v", path, err)
 	}
 	return response{status: resp.StatusCode, header: resp.Header, body: string(body)}
+}
+
+// sign is GitHub's X-Hub-Signature-256 value for body under secret.
+func sign(secret, body string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// webhook delivers a GitHub webhook event with body, signed with signature
+// (no X-Hub-Signature-256 header if it's empty), and returns the response.
+func (g *goblog) webhook(t *testing.T, event, body, signature string) response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		g.srv.URL+"/webhook",
+		bytes.NewBufferString(body),
+	)
+	if err != nil {
+		t.Fatalf("building webhook request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Github-Event", event)
+	if signature != "" {
+		req.Header.Set("X-Hub-Signature-256", signature)
+	}
+	resp, err := g.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST /webhook: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading webhook response: %v", err)
+	}
+	return response{status: resp.StatusCode, header: resp.Header, body: string(respBody)}
 }
 
 // assertStatus fails the test unless resp has status want.
