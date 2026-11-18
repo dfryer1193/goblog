@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"maps"
 	"path"
 	"strings"
 
@@ -28,6 +29,8 @@ type pageData struct {
 	// Site are the site settings: title, author, description, base URL and
 	// navigation.
 	Site *models.SiteSettings
+	// Stylesheet is the stylesheet's site path.
+	Stylesheet string
 	// Title is the page's own title. Empty means the site's title.
 	Title string
 	// Posts are the Posts a listing page shows, in display order.
@@ -51,17 +54,26 @@ var templateFuncs = template.FuncMap{ //nolint:gochecknoglobals // fixed set
 // output collects a build's output files.
 type output struct {
 	// settings are passed to every page as pageData.Site.
-	settings  *models.SiteSettings
-	templates map[string]*template.Template
-	files     map[string][]byte
+	settings *models.SiteSettings
+	// stylesheet is passed to every page as pageData.Stylesheet.
+	stylesheet string
+	templates  map[string]*template.Template
+	files      map[string][]byte
 }
 
 func newOutput(settings *models.SiteSettings) (*output, error) {
+	static, err := siteAssets()
+	if err != nil {
+		return nil, err
+	}
 	names, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("listing templates: %w", err)
 	}
-	out := &output{settings: settings, templates: map[string]*template.Template{}, files: map[string][]byte{}}
+	out := &output{
+		settings: settings, stylesheet: static.Stylesheet,
+		templates: map[string]*template.Template{}, files: maps.Clone(static.files),
+	}
 	for _, name := range names {
 		if name == layoutTemplate {
 			continue
@@ -83,6 +95,7 @@ func (o *output) page(name, kind string, data pageData) error {
 		return fmt.Errorf("no %s template", kind)
 	}
 	data.Site = o.settings
+	data.Stylesheet = o.stylesheet
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, path.Base(layoutTemplate), data); err != nil {
 		return fmt.Errorf("rendering %s: %w", name, err)

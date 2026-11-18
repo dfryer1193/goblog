@@ -1,0 +1,204 @@
+/* goblog's tmux design. Colours are the author's alacritty palette; the status
+   bar follows their .tmux.conf. JetBrains Mono is licensed under the SIL Open
+   Font License 1.1: {{asset "fonts/OFL.txt"}} */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("{{asset "fonts/JetBrainsMono-Regular.woff2"}}") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("{{asset "fonts/JetBrainsMono-Bold.woff2"}}") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("{{asset "fonts/JetBrainsMono-Italic.woff2"}}") format("woff2");
+}
+
+:root {
+  --bg: #222222;
+  --fg: #dddddd;
+  --dim: #666666;
+  --red: #e84f4f;
+  --green: #b7ce42;
+  --yellow: #fea63c;
+  --blue: #66aabb;
+  --magenta: #b7416e;
+  --cyan: #6d878d;
+  --bright-yellow: #ffe863;
+  --code-bg: #1b1b1b;
+  --rule: #333333;
+  --pane-border: #444444;
+  /* tmux status bar: status-bg, colour008 and colour245. */
+  --bar-bg: #3a3a3a;
+  --colour008: #666666;
+  --colour245: #8a8a8a;
+  --bar-h: 2.6rem;
+  --font: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* The frame: status bar, panes, info line. The panes scroll, not the page. */
+.frame { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; height: 100dvh; }
+
+/* Status bar (status-position top), also the site navigation:
+   [session] // [ #I ][ #W:#T ] // #I #W // ...     // date // time // host // */
+.tbar {
+  height: var(--bar-h);
+  font-size: 1.15rem;
+  display: flex;
+  align-items: stretch;
+  background: var(--bar-bg);
+  color: var(--fg);
+  white-space: nowrap;
+  position: relative;
+  z-index: 5;
+}
+.tbar > *, .tbar .wins { display: flex; align-items: center; }
+.tbar a { color: var(--fg); }
+.tbar a:hover { text-decoration: none; }
+.tbar .sep { color: var(--colour008); padding: 0 1ch; }
+.tbar .sess { padding-left: 1ch; font-weight: 700; }
+.tbar .wins { align-self: stretch; overflow: hidden; }
+.tbar .win { align-self: stretch; display: flex; align-items: center; }
+.tbar .win.cur { color: var(--bg); }
+.tbar .win.cur .wi, .tbar .win.cur .wn {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  padding: 0 1ch;
+  color: var(--bg);
+}
+.tbar .win.cur .wi { background: var(--fg); }
+.tbar .win.cur .wn { background: var(--colour245); }
+.tbar .grow { flex: 1; }
+.tbar .right { overflow: hidden; }
+
+/* The ☰ drawer: a <details>, so it opens with no JavaScript. Phones only. */
+.ham { display: none; }
+.ham > summary {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  padding: 0 1.5ch;
+  font-weight: 700;
+}
+.ham > summary::-webkit-details-marker { display: none; }
+.ham[open] > summary { background: #505050; }
+.ham .drawer {
+  position: fixed;
+  inset: var(--bar-h) 0 0 0;
+  font-size: 15px;
+  background: var(--bg);
+  border-top: 1px solid #505050;
+  padding: 1em 2ch;
+  overflow: auto;
+}
+
+/* Panes: the tree beside the active content pane, each with a title label. */
+.panes { display: grid; grid-template-columns: 34ch 1fr; min-height: 0; }
+.pane {
+  border: 1px solid var(--pane-border);
+  margin: 2px;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  padding: 1.2em 2ch 1em;
+}
+.pane > .label {
+  position: absolute;
+  top: -.1em;
+  left: 1ch;
+  background: var(--bg);
+  padding: 0 1ch;
+  font-size: .85em;
+}
+.pane.active { border-color: var(--green); }
+.pane.active > .label { color: var(--green); }
+.pane.active.err { border-color: var(--red); }
+.pane.active.err > .label { color: var(--red); }
+
+.tree { white-space: pre; line-height: 1.5; }
+.tree a.sel { background: var(--bar-bg); }
+.tree a.tag { color: var(--dim); }
+
+/* Plain info line along the bottom; deliberately not a statusline. */
+.info {
+  display: flex;
+  justify-content: space-between;
+  gap: 2ch;
+  padding: .1em 1.5ch;
+  color: var(--dim);
+  font-size: .85em;
+  white-space: nowrap;
+  overflow: hidden;
+  border-top: 1px solid var(--rule);
+}
+.info a { color: var(--dim); text-decoration: underline; }
+
+/* Content. */
+.content { max-width: 80ch; }
+.content > h1, article > h1 { font-size: 1.25em; margin: 0 0 .4em; }
+.meta { color: var(--dim); margin: 0 0 1.5em; }
+.meta time { color: var(--yellow); }
+.draft { color: var(--red); }
+ul.tags { display: inline; list-style: none; margin: 0; padding: 0; }
+ul.tags li { display: inline; margin-right: 1ch; }
+.posts, .taglist { list-style: none; margin: 0; padding: 0; }
+.posts > li, .taglist > li {
+  display: grid;
+  grid-template-columns: 12ch 1fr;
+  column-gap: 2ch;
+  padding: .3em 0;
+  border-bottom: 1px solid #2e2e2e;
+}
+.posts time { color: var(--yellow); }
+.posts .title { font-weight: 700; }
+.posts p { grid-column: 2; margin: 0; color: #aaaaaa; }
+.posts ul.tags { grid-column: 2; }
+.posts ul.tags a { color: var(--dim); }
+.taglist .count { color: var(--dim); }
+.error-text { color: var(--red); font-weight: 700; }
+
+/* Markdown bodies. */
+.body h2, .body h3 { font-size: 1em; margin: 1.8em 0 .6em; }
+.body h2 { color: var(--green); border-bottom: 1px solid var(--rule); }
+.body h3 { color: var(--yellow); }
+.body p { margin: 0 0 1em; }
+.body img { max-width: 100%; }
+.body pre { background: var(--code-bg); padding: .8em 1em; overflow-x: auto; margin: 0 0 1em; }
+.body code { font-family: var(--font); font-size: .95em; }
+.body :not(pre) > code { color: var(--bright-yellow); }
+.body ul, .body ol { padding-left: 2ch; }
+.body blockquote { margin: 0 0 1em; padding-left: 2ch; border-left: 1px solid var(--dim); color: #aaaaaa; }
+.body table { border-collapse: collapse; margin: 0 0 1em; }
+.body th, .body td { border: 1px solid var(--pane-border); padding: .2em 1ch; }
+
+@media (max-width: 760px) {
+  .panes { grid-template-columns: 1fr; }
+  .pane.side { display: none; }
+  .ham { display: block; }
+  .tbar .right { display: none; }
+}
