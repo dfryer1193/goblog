@@ -12,6 +12,8 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/dfryer1193/goblog/models"
@@ -37,7 +39,7 @@ func renderPages(b *siteBuild) error {
 		return fmt.Errorf("reading %s: %w", pagesDir, err)
 	}
 
-	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	md := goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: b.content}))
 	for _, e := range entries {
 		if e.IsDir() || path.Ext(e.Name()) != markdownExt {
 			continue
@@ -77,8 +79,13 @@ func readPage(content fs.FS, md goldmark.Markdown, name string) (*models.Page, e
 	if title == "" {
 		return nil, errors.New("front matter has no title")
 	}
+	pc, refs := newReferencing(name)
+	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
+	if err = refs.err(); err != nil {
+		return nil, err
+	}
 	var html bytes.Buffer
-	if err = md.Convert(body, &html); err != nil {
+	if err = md.Renderer().Render(&html, body, doc); err != nil {
 		return nil, fmt.Errorf("rendering Markdown: %w", err)
 	}
 	return &models.Page{

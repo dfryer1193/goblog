@@ -73,3 +73,64 @@ func TestPagesThatCollideWithTheSitesOwnPathsOrAreInvalidAreProblems(t *testing.
 		})
 	}
 }
+
+func TestPagesResolveRelativeLinksAndImagesLikePosts(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"pages/about.md": "---\ntitle: About\n---\n\n![me](../images/me.png) " +
+			"[a post](../posts/x.md#end) [contact](contact.md) [ext](https://example.com/a.md)\n",
+		"pages/contact.md": "---\ntitle: Contact\n---\n",
+		"images/me.png":    "png",
+		"posts/x.md":       "---\ntitle: X\ndate: 2026-01-01\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertNoProblems(t, site)
+	about := page(t, site, "about/index.html")
+	assertContains(t, "about", about, `src="/images/me.png"`)
+	assertContains(t, "about", about, `href="/posts/x/#end"`)
+	assertContains(t, "about", about, `href="/contact/"`)
+	assertContains(t, "about", about, `href="https://example.com/a.md"`)
+	page(t, site, "images/me.png")
+}
+
+func TestPageWithBrokenReferencesIsAProblem(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"pages/broken.md": "---\ntitle: Broken\n---\n\n[gone](../posts/gone.md) ![away](../../secret.png)\n",
+		"pages/about.md":  "---\ntitle: About\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	if len(site.Problems) != 1 {
+		t.Fatalf("got problems %v, want exactly one for pages/broken.md", site.Problems)
+	}
+	problem := site.Problems[0].String()
+	assertContains(t, "problem", problem, "pages/broken.md: ")
+	assertContains(t, "problem", problem, `"../posts/gone.md"`)
+	assertContains(t, "problem", problem, "not found")
+	assertContains(t, "problem", problem, "escapes the Content Repository")
+	assertNoFile(t, site, "broken/index.html")
+	page(t, site, "about/index.html")
+}
+
+func TestPostsLinkToPagesAtTheirURL(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"posts/x.md":     "---\ntitle: X\ndate: 2026-01-01\n---\n\n[about](../pages/about.md#me) [gone](../pages/gone.md)\n",
+		"posts/fine.md":  "---\ntitle: Fine\ndate: 2026-01-01\n---\n\n[about](../pages/about.md)\n",
+		"pages/about.md": "---\ntitle: About\n---\n",
+	})
+
+	site := build(t, repo, now, service.BuildOptions{})
+
+	if len(site.Problems) != 1 {
+		t.Fatalf("got problems %v, want exactly one for posts/x.md", site.Problems)
+	}
+	assertContains(
+		t,
+		"problem",
+		site.Problems[0].String(),
+		`posts/x.md: link "../pages/gone.md" points at pages/gone.md, which is not found`,
+	)
+	assertContains(t, "fine", page(t, site, "posts/fine/index.html"), `href="/about/"`)
+}
