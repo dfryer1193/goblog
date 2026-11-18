@@ -1,0 +1,7 @@
+# The Ivaldi Manifest: this Project's binaries and their settings.
+# ivaldi add appends to it, and you may edit it.
+version: 1
+binaries:
+  goblog:
+    kind: http
+    port: 8080
