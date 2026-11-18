@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -51,4 +54,70 @@ func TestUnknownPathsGetTheBuiltIn404WhenTheSiteHasNone(t *testing.T) {
 			t.Errorf("GET %s Cache-Control = %q, want the short rule", path, got)
 		}
 	}
+}
+
+func TestBuiltIn404UnderHEADAndGzip(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	g.removeSite404(t)
+	page := g.get(t, "/nope")
+
+	head := g.request(t, http.MethodHead, "/nope", nil)
+	assertStatus(t, "HEAD /nope", head, http.StatusNotFound)
+	if head.body != "" {
+		t.Errorf("HEAD /nope has a body:\n%s", head.body)
+	}
+	for _, key := range []string{"Content-Type", "Content-Length", "Cache-Control"} {
+		if got, want := head.header.Get(key), page.header.Get(key); got != want {
+			t.Errorf("HEAD /nope %s = %q, want GET's %q", key, got, want)
+		}
+	}
+	if got, want := page.header.Get("Content-Length"), strconv.Itoa(len(page.body)); got != want {
+		t.Errorf("GET /nope Content-Length = %q, want %q", got, want)
+	}
+
+	gz := g.request(t, http.MethodGet, "/nope", http.Header{"Accept-Encoding": {"gzip"}})
+	assertStatus(t, "gzip /nope", gz, http.StatusNotFound)
+	if gz.body != page.body {
+		t.Errorf("gzip-accepting GET /nope got a different body:\n%s", gz.body)
+	}
+	// It has no gzip variant, so, like any such file, it isn't negotiated.
+	for _, key := range []string{"Content-Encoding", "Vary"} {
+		if got := gz.header.Get(key); got != "" {
+			t.Errorf("gzip-accepting GET /nope %s = %q, want none", key, got)
+		}
+	}
+}
+
+// assertSelfContained fails the test if page loads anything (stylesheets,
+// fonts, images, scripts) or runs JavaScript.
+func assertSelfContained(t *testing.T, name, page string) {
+	t.Helper()
+	for _, bad := range []string{"<script", "<link", "src=", "url(", "@import", "javascript:"} {
+		if strings.Contains(strings.ToLower(page), bad) {
+			t.Errorf("%s contains %q:\n%s", name, bad, page)
+		}
+	}
+	if handler := regexp.MustCompile(`(?i)\son[a-z]+\s*=`).FindString(page); handler != "" {
+		t.Errorf("%s has an event handler %q", name, handler)
+	}
+	for _, href := range regexp.MustCompile(`href="([^"]*)"`).FindAllStringSubmatch(page, -1) {
+		if href[1] != "/" {
+			t.Errorf("%s links to %q; the built-in pages only link home", name, href[1])
+		}
+	}
+}
+
+func TestBuiltIn404IsSelfContained(t *testing.T) {
+	t.Parallel()
+	repo := newContentRepo(t)
+	repo.commit(t, map[string]string{"posts/hello.md": post("Hello", "2026-03-01")})
+	g := startGoblog(t, repo, nil)
+	g.sync(t)
+	g.removeSite404(t)
+
+	assertSelfContained(t, "the built-in 404", g.get(t, "/nope").body)
 }
