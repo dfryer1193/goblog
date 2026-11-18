@@ -13,6 +13,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"go.yaml.in/yaml/v3"
 
@@ -41,7 +42,7 @@ func readPosts(content fs.FS, today models.Date) ([]*models.Post, []models.Probl
 		return nil, nil, fmt.Errorf("reading %s: %w", postsDir, err)
 	}
 
-	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	md := goldmark.New(goldmark.WithExtensions(extension.GFM, &references{content: content}))
 	var (
 		posts    []*models.Post
 		problems []models.Problem
@@ -92,7 +93,11 @@ func readPost(content fs.FS, md goldmark.Markdown, name string, today models.Dat
 	}
 	post.Draft = post.PublishDate.IsZero() || post.PublishDate.Compare(today) > 0
 
-	doc := md.Parser().Parse(text.NewReader(body))
+	pc, refs := newReferencing(name)
+	doc := md.Parser().Parse(text.NewReader(body), parser.WithContext(pc))
+	if len(refs.errs) > 0 {
+		return nil, errors.Join(refs.errs...)
+	}
 	if post.Summary == "" {
 		post.Summary = firstParagraph(doc, body)
 	}
