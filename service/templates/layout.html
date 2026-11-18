@@ -3,10 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if .Title}}{{.Title}}{{else}}goblog{{end}}</title>
+<title>{{with .Title}}{{.}} · {{end}}{{.Site.Title}}</title>
+{{- with .Site.Description}}
+<meta name="description" content="{{.}}">
+{{- end}}
+{{- with .Site.Author}}
+<meta name="author" content="{{.}}">
+{{- end}}
 </head>
 <body>
-<nav><a href="/">posts</a></nav>
+<header><a href="/">{{.Site.Title}}</a></header>
+<nav>
+{{- range .Site.Nav}}
+<a href="{{.Link}}">{{.Name}}</a>
+{{- end}}
+</nav>
 <main>
 {{template "content" .}}
 </main>
