@@ -104,6 +104,36 @@ falls back to `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts`.) Point
 `GOBLOG_WORK_DIR` at ephemeral storage, such as an `emptyDir`: goblog keeps
 the clone and the rendered site there and rebuilds both at startup.
 
+### Setting up secrets
+
+[`scripts/setup-secrets.sh`](scripts/setup-secrets.sh) is an interactive
+wizard that sets up every secret goblog needs, so you don't have to work the
+steps out again each time. Run it on a machine with a browser, `gh` (signed in)
+and the 1Password CLI `op` (signed in):
+
+```sh
+GH_REPO=<owner>/goblog ./scripts/setup-secrets.sh
+```
+
+It walks through:
+
+1. **CI image pushes:** a Harbor robot account with push access, stored as the
+   `HARBOR_USERNAME` and `HARBOR_PASSWORD` repository secrets. The wizard
+   checks the credentials can push before storing them.
+2. **Cloning:** a new read-only deploy key on the Content Repository, plus
+   `known_hosts` built from GitHub's published host keys.
+3. **The webhook:** a `push` webhook on the Content Repository with a
+   generated secret.
+4. **The cluster:** 1Password items holding the deploy key, `known_hosts` and
+   the webhook secret, which your deployment maps to `GOBLOG_DEPLOY_KEY`,
+   `GOBLOG_SSH_KNOWN_HOSTS` and `GOBLOG_WEBHOOK_SECRET`.
+
+Secrets never appear on a command line or in a file outside a temporary
+directory that the wizard deletes. Re-running it skips what's already set up,
+or asks before replacing it. The defaults (the registry, the Content Repository
+and the webhook URL) are variables at the top of the stages section; override
+them with environment variables of the same names for your own blog.
+
 At startup goblog makes a shallow, single-branch clone of the Content
 Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
 renders the site into a fresh directory there and switches serving over to it.
