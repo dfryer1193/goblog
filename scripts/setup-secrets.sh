@@ -200,79 +200,120 @@ finish() {
 
 run_wizard() {
 
-TOTAL_STAGES=4
+TOTAL_STAGES=8
 
 HARBOR_URL="${HARBOR_URL:-https://registry.werewolves.fyi}"
 HARBOR_PROJECT="${HARBOR_PROJECT:-library}"
 HARBOR_REPOSITORY="${HARBOR_REPOSITORY:-goblog}"
 ROBOT_NAME="${ROBOT_NAME:-goblog-ci}"
+CONTENT_REPO="${CONTENT_REPO:-dfryer1193/blog}"
+WEBHOOK_URL="${WEBHOOK_URL:-https://blog.werewolves.fyi/webhook}"
+DEPLOY_KEY_TITLE="${DEPLOY_KEY_TITLE:-goblog}"
+DEPLOY_KEY_ITEM="${DEPLOY_KEY_ITEM:-goblog-deploy-key}"
+WEBHOOK_ITEM="${WEBHOOK_ITEM:-goblog-webhook}"
 REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || echo "")
 
-banner "goblog CI: Harbor push credentials"
+# Scratch space for the generated key; wiped however the wizard exits.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+# json_string VALUE prints VALUE as a JSON string literal.
+json_string() {
+  local v="$1"
+  v=${v//\\/\\\\}; v=${v//\"/\\\"}; v=${v//$'\t'/\\t}; v=${v//$'\r'/}; v=${v//$'\n'/\\n}
+  printf '"%s"' "$v"
+}
+
+# Skip the Harbor stages on a re-run if both secrets already exist.
+SKIP_HARBOR=no
+if [[ -n "$REPO" ]]; then
+  existing=$(gh secret list --repo "$REPO" 2>/dev/null || true)
+  if grep -q '^HARBOR_USERNAME[[:space:]]' <<<"$existing" && grep -q '^HARBOR_PASSWORD[[:space:]]' <<<"$existing"; then
+    SKIP_HARBOR=yes
+  fi
+fi
+
+banner "goblog: CI and cluster secrets"
+if [[ "$SKIP_HARBOR" == yes ]]; then
+  say "HARBOR_USERNAME and HARBOR_PASSWORD are already set on $REPO."
+  confirm "Skip the Harbor stages (1–4)?" || SKIP_HARBOR=no
+fi
 
 # ── 1. Create the robot account ───────────────────────────────────────────
 stage "Harbor: create a robot account for goblog's CI"
-say "CI pushes ${HARBOR_URL#https://}/$HARBOR_PROJECT/$HARBOR_REPOSITORY, so it needs a robot account that can"
-say "push and pull in the '$HARBOR_PROJECT' project and do nothing else."
-open_url "$HARBOR_URL/harbor/projects"
-step "Log in (Authentik), then open the '$HARBOR_PROJECT' project."
-step "Go to the 'Robot Accounts' tab and click '+ NEW ROBOT ACCOUNT'."
-step "Name: $ROBOT_NAME    Expiration: Never    Description: goblog CI image pushes"
-step "Permissions: under Repository, tick Push and Pull. Leave everything else unticked."
-step "Click Finish/Add. Harbor shows the full robot name and its secret ONCE."
-note "Labels can differ slightly between Harbor versions; the shape is the same."
-warn "Copy both values now, and save them in your password manager as well."
-note "The full name looks like: robot\$${HARBOR_PROJECT}+${ROBOT_NAME}"
-ask HARBOR_USERNAME "Paste the full robot name:"
-ask_secret HARBOR_PASSWORD "Paste the robot secret:"
+if [[ "$SKIP_HARBOR" == yes ]]; then
+  note "Skipped: the secrets already exist."
+else
+  say "CI pushes ${HARBOR_URL#https://}/$HARBOR_PROJECT/$HARBOR_REPOSITORY, so it needs a robot account that can"
+  say "push and pull in the '$HARBOR_PROJECT' project and do nothing else."
+  open_url "$HARBOR_URL/harbor/projects"
+  step "Log in (Authentik), then open the '$HARBOR_PROJECT' project."
+  step "Go to the 'Robot Accounts' tab and click '+ NEW ROBOT ACCOUNT'."
+  step "Name: $ROBOT_NAME    Expiration: Never    Description: goblog CI image pushes"
+  step "Permissions: under Repository, tick Push and Pull. Leave everything else unticked."
+  step "Click Finish/Add. Harbor shows the full robot name and its secret ONCE."
+  note "Labels can differ slightly between Harbor versions; the shape is the same."
+  warn "Copy both values now, and save them in your password manager as well."
+  note "The full name looks like: robot\$${HARBOR_PROJECT}+${ROBOT_NAME}"
+  ask HARBOR_USERNAME "Paste the full robot name:"
+  ask_secret HARBOR_PASSWORD "Paste the robot secret:"
+fi
 
 # ── 2. Verify before storing anything ─────────────────────────────────────
 stage "Harbor: check the credentials can push"
-say "Asking Harbor's token service for a push+pull token on $HARBOR_PROJECT/$HARBOR_REPOSITORY."
-scope="repository:$HARBOR_PROJECT/$HARBOR_REPOSITORY:pull,push"
-# Credentials go to curl on stdin, never on the command line.
-response=$(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD" |
-  curl -sS -K - --get --data-urlencode "service=harbor-registry" --data-urlencode "scope=$scope" \
-    -w '\n%{http_code}' "$HARBOR_URL/service/token" || true)
-status=${response##*$'\n'}
-body=${response%$'\n'*}
-if [[ "$status" != "200" ]]; then
-  warn "Harbor's token service answered HTTP ${status:-none} (expected 200). Check $HARBOR_URL is reachable, then re-run."
-  exit 1
-fi
-token=$(printf '%s' "$body" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-payload=$(printf '%s' "$token" | cut -d. -f2 | tr '_-' '/+')
-while (( ${#payload} % 4 )); do payload+="="; done
-claims=$(printf '%s' "$payload" | base64 -d 2>/dev/null || true)
-if [[ "$claims" == *'"push"'* ]]; then
-  printf '  %s✓ credentials work, and push is granted on %s/%s%s\n' "$GREEN" "$HARBOR_PROJECT" "$HARBOR_REPOSITORY" "$RESET"
+if [[ "$SKIP_HARBOR" == yes ]]; then
+  note "Skipped: the secrets already exist."
 else
-  # Harbor answers wrong credentials with an anonymous token (HTTP 200, no actions),
-  # so a missing "push" means either bad credentials or a missing permission.
-  warn "Harbor didn't grant push. Either the name or secret is wrong (Harbor treats bad"
-  warn "credentials as anonymous), or the robot lacks Repository: Push. Fix it, then re-run."
-  exit 1
+  say "Asking Harbor's token service for a push+pull token on $HARBOR_PROJECT/$HARBOR_REPOSITORY."
+  scope="repository:$HARBOR_PROJECT/$HARBOR_REPOSITORY:pull,push"
+  # Credentials go to curl on stdin, never on the command line.
+  response=$(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD" |
+    curl -sS -K - --get --data-urlencode "service=harbor-registry" --data-urlencode "scope=$scope" \
+      -w '\n%{http_code}' "$HARBOR_URL/service/token" || true)
+  status=${response##*$'\n'}
+  body=${response%$'\n'*}
+  if [[ "$status" != "200" ]]; then
+    warn "Harbor's token service answered HTTP ${status:-none} (expected 200). Check $HARBOR_URL is reachable, then re-run."
+    exit 1
+  fi
+  token=$(printf '%s' "$body" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  payload=$(printf '%s' "$token" | cut -d. -f2 | tr '_-' '/+')
+  while (( ${#payload} % 4 )); do payload+="="; done
+  claims=$(printf '%s' "$payload" | base64 -d 2>/dev/null || true)
+  if [[ "$claims" == *'"push"'* ]]; then
+    printf '  %s✓ credentials work, and push is granted on %s/%s%s\n' "$GREEN" "$HARBOR_PROJECT" "$HARBOR_REPOSITORY" "$RESET"
+  else
+    # Harbor answers wrong credentials with an anonymous token (HTTP 200, no actions),
+    # so a missing "push" means either bad credentials or a missing permission.
+    warn "Harbor didn't grant push. Either the name or secret is wrong (Harbor treats bad"
+    warn "credentials as anonymous), or the robot lacks Repository: Push. Fix it, then re-run."
+    exit 1
+  fi
+  pause
 fi
-pause
 
 # ── 3. Store them as GitHub Actions secrets ───────────────────────────────
 stage "GitHub: set the HARBOR_* secrets"
 if [[ -z "$REPO" ]]; then
-  warn "Couldn't detect the GitHub repo. Run this from inside the goblog clone, with gh logged in."
+  warn "Couldn't detect the GitHub repo. Run this inside the goblog clone, or set GH_REPO=owner/repo."
   exit 1
 fi
-say "goblog's CI reads secrets.HARBOR_USERNAME and secrets.HARBOR_PASSWORD."
-say "Target repository: $BOLD$REPO$RESET"
-if confirm "Set both secrets on $REPO now (replacing any existing values)?"; then
-  set_secret HARBOR_USERNAME "$HARBOR_USERNAME"
-  set_secret HARBOR_PASSWORD "$HARBOR_PASSWORD"
+if [[ "$SKIP_HARBOR" == yes ]]; then
+  note "Skipped: the secrets already exist."
 else
-  SKIPPED+=("GitHub secrets HARBOR_USERNAME and HARBOR_PASSWORD on $REPO")
+  say "goblog's CI reads secrets.HARBOR_USERNAME and secrets.HARBOR_PASSWORD."
+  say "Target repository: $BOLD$REPO$RESET"
+  if confirm "Set both secrets on $REPO now (replacing any existing values)?"; then
+    set_secret HARBOR_USERNAME "$HARBOR_USERNAME"
+    set_secret HARBOR_PASSWORD "$HARBOR_PASSWORD"
+  else
+    SKIPPED+=("GitHub secrets HARBOR_USERNAME and HARBOR_PASSWORD on $REPO")
+  fi
+  pause
 fi
-pause
 
 # ── 4. Confirm ────────────────────────────────────────────────────────────
-stage "GitHub: confirm the secrets are there"
+stage "GitHub: confirm the HARBOR_* secrets are there"
 listed=$(gh secret list --repo "$REPO" 2>/dev/null || true)
 for name in HARBOR_USERNAME HARBOR_PASSWORD; do
   if grep -q "^${name}[[:space:]]" <<<"$listed"; then
@@ -281,7 +322,105 @@ for name in HARBOR_USERNAME HARBOR_PASSWORD; do
     warn "$name is not set on $REPO"
   fi
 done
-note "The first real push happens when v0.1.0 is tagged (ticket #21)."
+[[ "$SKIP_HARBOR" == yes ]] || pause
+
+# ── 5. Deploy key on the Content Repository ───────────────────────────────
+stage "GitHub: a read-only deploy key on $CONTENT_REPO"
+say "goblog clones the private Content Repository over SSH with a key that can only read it."
+existing_key=$(gh repo deploy-key list --repo "$CONTENT_REPO" --json id,title \
+  --jq ".[] | select(.title == \"$DEPLOY_KEY_TITLE\") | .id" 2>/dev/null || true)
+if [[ -n "$existing_key" ]]; then
+  warn "$CONTENT_REPO already has a deploy key titled '$DEPLOY_KEY_TITLE'."
+  if confirm "Delete it and create a new one? (The cluster must then get the new key from 1Password.)"; then
+    for id in $existing_key; do gh repo deploy-key delete "$id" --repo "$CONTENT_REPO" >/dev/null; done
+  else
+    warn "Keeping the existing key. Stages 5 and 7 can't continue without the private half; re-run when you want to rotate it."
+    exit 1
+  fi
+fi
+ssh-keygen -q -t ed25519 -N "" -C "goblog read-only deploy key for $CONTENT_REPO" -f "$WORK/deploy_key"
+gh repo deploy-key add "$WORK/deploy_key.pub" --repo "$CONTENT_REPO" --title "$DEPLOY_KEY_TITLE" >/dev/null
+printf '  %s✓ added%s read-only deploy key "%s" to %s\n' "$GREEN" "$RESET" "$DEPLOY_KEY_TITLE" "$CONTENT_REPO"
+# known_hosts from GitHub's published host keys (via the authenticated API), not ssh-keyscan.
+gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$WORK/known_hosts"
+printf '  %s✓ built%s known_hosts with %s GitHub host keys\n' "$GREEN" "$RESET" "$(wc -l < "$WORK/known_hosts" | tr -d ' ')"
+note "The private key exists only in a temporary directory until stage 7 stores it."
+pause
+
+# ── 6. Webhook on the Content Repository ──────────────────────────────────
+stage "GitHub: a push webhook on $CONTENT_REPO"
+say "GitHub will notify goblog at $WEBHOOK_URL on every push, signed with a shared secret."
+note "Until the site goes live (#23), deliveries will fail; goblog's 1-minute poll covers that."
+existing_hooks=$(gh api "repos/$CONTENT_REPO/hooks" --jq ".[] | select(.config.url == \"$WEBHOOK_URL\") | .id" 2>/dev/null || true)
+if [[ -n "$existing_hooks" ]]; then
+  warn "$CONTENT_REPO already has a webhook for $WEBHOOK_URL."
+  confirm "Replace it (it gets a new secret)?" || { warn "Keeping the existing webhook; re-run to rotate it."; exit 1; }
+  for id in $existing_hooks; do gh api -X DELETE "repos/$CONTENT_REPO/hooks/$id" >/dev/null; done
+fi
+WEBHOOK_SECRET=$(openssl rand -hex 32)
+# The secret goes to gh on stdin, never on the command line.
+printf '{"name":"web","active":true,"events":["push"],"config":{"url":%s,"content_type":"json","insecure_ssl":"0","secret":%s}}' \
+  "$(json_string "$WEBHOOK_URL")" "$(json_string "$WEBHOOK_SECRET")" |
+  gh api -X POST "repos/$CONTENT_REPO/hooks" --input - >/dev/null
+printf '  %s✓ created%s push webhook → %s\n' "$GREEN" "$RESET" "$WEBHOOK_URL"
+pause
+
+# ── 7. 1Password items for the cluster ────────────────────────────────────
+stage "1Password: store the cluster's secrets"
+say "The cluster's 1Password operator turns these items into Kubernetes Secrets for goblog."
+if ! command -v op >/dev/null 2>&1 || ! op whoami >/dev/null 2>&1; then
+  warn "The 1Password CLI isn't installed or isn't signed in. Run 'op signin' (or eval \"\$(op signin)\") and re-run."
+  exit 1
+fi
+note "Use the vault the cluster's 1Password operator reads from."
+ask OP_VAULT "1Password vault name:"
+for item in "$DEPLOY_KEY_ITEM" "$WEBHOOK_ITEM"; do
+  if op item get "$item" --vault "$OP_VAULT" >/dev/null 2>&1; then
+    warn "An item named '$item' already exists in '$OP_VAULT'."
+    confirm "Archive it and create a fresh one?" || { warn "Stopping; nothing more was changed in 1Password."; exit 1; }
+    op item delete "$item" --vault "$OP_VAULT" --archive >/dev/null
+  fi
+done
+# Items go to op on stdin as JSON, never as command-line assignments.
+printf '{"title":%s,"category":"SECURE_NOTE","fields":[{"id":"private-key","label":"private-key","type":"CONCEALED","value":%s},{"id":"known-hosts","label":"known-hosts","type":"STRING","value":%s}]}' \
+  "$(json_string "$DEPLOY_KEY_ITEM")" "$(json_string "$(cat "$WORK/deploy_key")")" "$(json_string "$(cat "$WORK/known_hosts")")" |
+  op item create --vault "$OP_VAULT" - >/dev/null
+printf '  %s✓ created%s %s (fields: private-key, known-hosts)\n' "$GREEN" "$RESET" "$DEPLOY_KEY_ITEM"
+printf '{"title":%s,"category":"SECURE_NOTE","fields":[{"id":"secret","label":"secret","type":"CONCEALED","value":%s}]}' \
+  "$(json_string "$WEBHOOK_ITEM")" "$(json_string "$WEBHOOK_SECRET")" |
+  op item create --vault "$OP_VAULT" - >/dev/null
+printf '  %s✓ created%s %s (field: secret)\n' "$GREEN" "$RESET" "$WEBHOOK_ITEM"
+pause
+
+# ── 8. Verify and clean up ────────────────────────────────────────────────
+stage "Check everything landed"
+# The key must come back byte-for-byte (including newlines) or SSH won't parse it.
+stored_key=$(op read "op://$OP_VAULT/$DEPLOY_KEY_ITEM/private-key" 2>/dev/null || true)
+if [[ "$stored_key" == "$(cat "$WORK/deploy_key")" ]]; then
+  printf '  %s✓%s 1Password returns the deploy key intact\n' "$GREEN" "$RESET"
+else
+  warn "The deploy key read back from 1Password doesn't match (newlines lost?). Check the item before deploying."
+fi
+stored_secret=$(op read "op://$OP_VAULT/$WEBHOOK_ITEM/secret" 2>/dev/null || true)
+if [[ "$stored_secret" == "$WEBHOOK_SECRET" ]]; then
+  printf '  %s✓%s 1Password returns the webhook secret intact\n' "$GREEN" "$RESET"
+else
+  warn "The webhook secret read back from 1Password doesn't match. Check the item before deploying."
+fi
+if gh repo deploy-key list --repo "$CONTENT_REPO" --json title,readOnly \
+     --jq ".[] | select(.title == \"$DEPLOY_KEY_TITLE\" and .readOnly) | .title" 2>/dev/null | grep -q .; then
+  printf '  %s✓%s %s has a read-only deploy key "%s"\n' "$GREEN" "$RESET" "$CONTENT_REPO" "$DEPLOY_KEY_TITLE"
+else
+  warn "Couldn't find a read-only deploy key '$DEPLOY_KEY_TITLE' on $CONTENT_REPO."
+fi
+if gh api "repos/$CONTENT_REPO/hooks" --jq ".[] | select(.config.url == \"$WEBHOOK_URL\" and .active) | .id" 2>/dev/null | grep -q .; then
+  printf '  %s✓%s %s has an active push webhook for %s\n' "$GREEN" "$RESET" "$CONTENT_REPO" "$WEBHOOK_URL"
+else
+  warn "Couldn't find an active webhook for $WEBHOOK_URL on $CONTENT_REPO."
+fi
+rm -rf "$WORK"
+note "The temporary key files are deleted. The private key now lives only in 1Password."
+note "Next: #22 maps these items into GOBLOG_DEPLOY_KEY, GOBLOG_SSH_KNOWN_HOSTS and GOBLOG_WEBHOOK_SECRET."
 pause
 
 finish
