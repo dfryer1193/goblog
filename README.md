@@ -1,51 +1,200 @@
 # goblog
 
-A blogging platform backend designed to consume Markdown articles and produce
-blog posts.
+A single-author blog server. You write Posts as Markdown in a separate git
+repository, the Content Repository, and goblog publishes them with no manual
+publishing step.
 
-Supports comments.
+> **Status:** goblog is being rebuilt from scratch. The server clones the
+> Content Repository, keeps it in sync through the webhook and polling, and
+> serves the whole site (Posts, Pages, tags, the Atom feed and the sitemap) in
+> its tmux-styled design, pre-compressed and with no JavaScript.
+> `goblog build` renders the same site locally. Deployment docs are still to
+> come. The previous implementation is kept under the `legacy` tag for
+> reference.
 
-Does not support user login (yet)
+## How it works
 
-## Post Repo Setup
+goblog keeps a shallow clone of the Content Repository. Whenever that
+repository changes, it renders the **whole site** into static, pre-compressed
+files and switches over to the new output all at once. A change is signalled
+by a signed GitHub webhook or found by a poll every minute. A scheduled Post's
+Publish Date arriving also triggers a render. Between renders goblog only
+serves files: no JavaScript, and no database. A failed render leaves the
+previous site in place.
 
-Currently, the project expects a specific post repo structure:
+See [ADR-0001](docs/adr/0001-render-on-change-static-output.md) for why goblog
+renders on change instead of running as a static site generator in CI or as a
+database-backed server.
+
+The [glossary](GLOSSARY.md) defines the terms used here and in the code:
+Content Repository, Post, Page, Publish Date, Draft and Published Post.
+
+## The Content Repository
 
 ```text
-<blog_posts>/
-    |-posts/
-    |   |-001_first_post.md
-    |   |-002_second_post.md
-    |   |-003_third_post.md
-    |   |-...
-    |   `-nnn_Nth_post.md
-    `-images/ 
-        |-some_image.jpg
-        `-another_image.png
+<content-repository>/
+├── posts/       one Post per .md file, e.g. posts/picluster.md → /posts/picluster/
+├── pages/       one Page per .md file, e.g. pages/about.md → /about/
+├── images/      images referenced from Posts by relative path (subfolders allowed)
+├── templates/   ignored by goblog, e.g. a new-post template
+└── site.yaml    site settings: title, author, description, url, navigation, timezone
 ```
 
-The webhook handler will generate html files from the markdown files, prefixing
-any links with the preconfigured blog domain. (currently defaults to my
-personal blog at `https://blog.werewolves.fyi`)
+A Post's front matter needs a `title`. Its optional `date` (`YYYY-MM-DD`) is its
+Publish Date. A Post without one, or with one still in the future, is a Draft
+and isn't published. Only the default branch is published.
 
-Images will exist at `http://<domain>/images/`. The document AST will handle
-pointing relative links at the right place, including handling `./` and `../`
-without allowing http server path traversal. Given the strict project
-structure, the parsing logic assumes that every link node points to a post, and
-every image node points to an image.
+Relative links and images are rewritten to the site's URLs: `./picluster.md`
+becomes `/posts/picluster/`, `../pages/about.md` becomes `/about/` and
+`../images/rack.png` becomes `/images/rack.png`. A relative link that escapes
+the Content Repository, or points at a missing file or at one the site never
+publishes (such as `../README.md`), is an error, and the Post or Page is
+skipped. A link to a Post that
+isn't published (a Draft, or a Post or Page skipped for an error) is a
+warning instead: it's shown as plain text until its target publishes.
 
-### Examples
+`site.yaml` must set the site's `title` and its base `url`, e.g.
+`url: https://blog.example.com`. A `site.yaml` without them is invalid, so the
+build fails and a running goblog keeps serving the previous site. Everything
+else in it is optional:
 
-This markdown
-
-```markdown
-This text contains a [relative link](./README.md).
-It also contains ![an image](../images/test_image.png)
+```yaml
+title: Werewolf Notes          # required
+url: https://blog.example.com  # required: absolute http(s), no query or fragment
+author: D. Author
+description: Homelab things
+timezone: America/New_York     # an IANA name; decides when Publish Dates arrive (default UTC)
+nav:                           # the status bar's windows, in order
+  - {name: posts, link: /}
+  - {name: tags, link: /tags/}
+  - {name: about, link: /about/}
 ```
 
-...generates this html (css class information is omitted for brevity):
+The site publishes an Atom feed of the Published Posts at `/feed.xml` and a
+sitemap at `/sitemap.xml`, both with absolute URLs under `url`. A Content
+Repository with no `site.yaml` at all still builds, for previewing, with
+default settings, but that's reported as a problem, and the site then has no
+feed or sitemap, and nothing links to them.
 
-```html
-This text contains a <a href="https://blog.werewolves.fyi/README">relative link</a>.
-It also contains <img src="https://blog.werewolves.fyi/test_image.png" alt="an image"/>
+## Running goblog
+
+goblog ships as a single binary, `goblog`, and a container image of the same
+name built by CI. It ships no deployment manifests: bring your own. Everything
+specific to one blog lives in the Content Repository's `site.yaml` and in the
+deployment's environment, so you can run your own blog from a fork without
+code changes.
+
+The server is configured from the environment:
+
+| Variable                 | Meaning                                                                             | Default                                    |
+| ------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------ |
+| `GOBLOG_CONTENT_URL`     | The Content Repository's URL: SSH (`git@github.com:you/blog-content.git`) or HTTPS  | required                                   |
+| `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
+| `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
+| `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
+| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
+| `PORT`                   | The port to listen on                                                               | `8080`                                     |
+| `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
+| `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
+
+`GOBLOG_SSH_KNOWN_HOSTS` is required whenever you use a deploy key: the
+container image has no `known_hosts` file, so without it goblog can't check
+the SSH host's key and every clone and fetch fails. (Outside the image, goblog
+falls back to `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts`.) Point
+`GOBLOG_WORK_DIR` at ephemeral storage, such as an `emptyDir`: goblog keeps
+the clone and the rendered site there and rebuilds both at startup.
+
+At startup goblog makes a shallow, single-branch clone of the Content
+Repository into `GOBLOG_WORK_DIR` (with go-git: no `git` binary is needed),
+renders the site into a fresh directory there and switches serving over to it.
+Until that first render succeeds, `/readyz` reports not ready, and every
+other request (except `/webhook`) gets status 503 with a built-in "starting"
+page, `Cache-Control: no-store` and `Retry-After: 10`. Unknown paths get the
+site's own 404 page, with status 404, or a built-in 404 page in the same style
+if the site's can't be read.
+
+### Keeping the site in sync
+
+Two triggers keep the site up to date. They never render at the same time:
+one waits for the other.
+
+- **The webhook.** Add a GitHub webhook to the Content Repository with the
+  payload URL `https://<your-site>/webhook`, content type
+  `application/json`, the secret from `GOBLOG_WEBHOOK_SECRET` and just the
+  `push` event. goblog checks each delivery's `X-Hub-Signature-256` and
+  answers 401 to one without a valid signature. A `push` gets 202 straight
+  away, and goblog fetches and renders in the background. Pushes that arrive
+  during a sync cause one more sync after it. A `ping` gets 204. Without
+  `GOBLOG_WEBHOOK_SECRET`, `/webhook` answers like an unknown path (404, to
+  every method) and goblog logs at startup
+  that only polling will sync.
+- **The poll.** Every `GOBLOG_POLL_INTERVAL`, goblog asks the remote for the
+  branch's latest commit (like `git ls-remote`, with no fetch) and fetches and
+  renders only if it has changed. That catches pushes whose webhook was lost,
+  or that reached another replica. If the date in the site's timezone
+  (`timezone` in `site.yaml`, UTC by default) has changed since the last
+  render, the poll renders the same commit again without fetching, so Posts
+  scheduled for the new day publish on time, even if the remote is
+  unreachable. Until the first render succeeds, each poll retries the full
+  sync.
+
+A sync or render that fails is logged, and the previous site keeps serving. A
+commit that can't be rendered isn't retried until the next commit or the
+next day.
+
+goblog logs to stdout only. mjolnir's JSON log file (`logs/mjolnir.jsonl` by
+default) is turned off, because the image's working directory may not be
+writable.
+
+The server listens on `$PORT` and answers these probes:
+
+| Path        | Probe     |
+| ----------- | --------- |
+| `/livez`    | liveness  |
+| `/readyz`   | readiness |
+| `/startupz` | startup   |
+
+To render the site once from a local checkout of the Content Repository, for
+previewing, run:
+
+```sh
+goblog build -content path/to/content-repository -out public [-drafts]
 ```
+
+The output directory must not exist yet, or be empty. `-drafts` also renders
+Drafts, marked as such. Posts that can't be rendered, such as one with no
+`title`, are reported and skipped. The rest of the site is still written, but
+the command then exits with status 1. Warnings, about things the build worked
+around, are reported too, but on their own the command still succeeds.
+
+
+## Development
+
+The repository is scaffolded with
+[Ivaldi](https://github.com/worldtree-industries/ivaldi). You need Go 1.27 and
+[golangci-lint v2](https://golangci-lint.run/welcome/install/).
+
+| Command            | What it does                                  |
+| ------------------ | --------------------------------------------- |
+| `make lint`        | Run golangci-lint                             |
+| `make test`        | Run the tests                                 |
+| `make build`       | Build everything, and each binary into `bin/` |
+| `make run-goblog`  | Run the server                                |
+| `make install`     | `go install` every binary                     |
+| `make setup-hooks` | Turn on the pre-commit hook in a fresh clone  |
+
+Run `make setup-hooks` once after cloning. The pre-commit hook runs
+`make lint test`.
+
+The code follows Ivaldi's layers, and lint enforces which may import which:
+
+| Layer      | Holds                                                  | May import          |
+| ---------- | ------------------------------------------------------ | ------------------- |
+| `api`      | HTTP handlers: static file serving, the webhook        | `service`, `models` |
+| `service`  | the site build, and syncing and switching over output  | `data`, `models`    |
+| `data`     | Content Repository access: clone and fetch             | `models`            |
+| `models`   | Post, Page and site settings types, the rendered site  | nothing             |
+
+## Licence
+
+See [LICENSE](LICENSE).

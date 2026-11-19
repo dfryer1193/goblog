@@ -1,0 +1,9 @@
+{{define "content"}}
+<article>
+<h1>{{.Post.Title}}</h1>
+<div class="meta">{{template "date" .Post}}{{template "tags" .Post.Tags}}</div>
+<div class="body">
+{{.Post.Body}}
+</div>
+</article>
+{{end}}

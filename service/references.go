@@ -1,0 +1,233 @@
+package service
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/url"
+	"path"
+	"strings"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
+
+	"github.com/dfryer1193/goblog/models"
+)
+
+// referencesKey holds a *referencing in a goldmark parser.Context: the
+// Content Repository file being parsed and the bad references found in it.
+var referencesKey = parser.NewContextKey() //nolint:gochecknoglobals // goldmark context keys are package-level
+
+// referencing is the state of resolving one file's references.
+type referencing struct {
+	// from is the Content Repository path of the file being parsed.
+	from string
+	// errs are its references that can't be resolved.
+	errs []error
+	// links are its links to Posts and Pages.
+	links []siteLink
+}
+
+// siteLink is a link to a Post or Page, which only renders as a link if
+// that Post or Page is on the site.
+type siteLink struct {
+	node *ast.Link
+	// dest is the link's destination as the author wrote it.
+	dest string
+	// target is the Content Repository file it points at, e.g. posts/x.md.
+	target string
+}
+
+// err returns the bad references, all on one line, or nil if there are none.
+func (r *referencing) err() error {
+	if len(r.errs) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(r.errs))
+	for i, err := range r.errs {
+		msgs[i] = err.Error()
+	}
+	return errors.New(strings.Join(msgs, "; "))
+}
+
+// newReferencing returns a parser.Context for parsing the Content Repository
+// file at from, and the state its references are resolved into.
+func newReferencing(from string) (parser.Context, *referencing) {
+	r := &referencing{from: from}
+	pc := parser.NewContext()
+	pc.Set(referencesKey, r)
+	return pc, r
+}
+
+// references is a goldmark extension that rewrites relative links and images
+// in the Content Repository into the site's URLs. Files are only parsed with
+// it through a parser.Context from newReferencing.
+type references struct {
+	content fs.FS
+	// images is the set of imageFiles in content, listed on first use.
+	images map[string]bool
+}
+
+// Extend adds the reference rewriting to m.
+func (x *references) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(parser.WithASTTransformers(util.Prioritized(x, 100))) //nolint:mnd // goldmark priority
+}
+
+// Transform rewrites every link and image destination in doc.
+func (x *references) Transform(doc *ast.Document, _ text.Reader, pc parser.Context) {
+	r, ok := pc.Get(referencesKey).(*referencing)
+	if !ok {
+		return
+	}
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		dest, kind, isReference := destination(n)
+		if !isReference {
+			return ast.WalkContinue, nil
+		}
+		link, isLink := n.(*ast.Link)
+		written := string(*dest)
+		resolved, target, err := x.resolve(r.from, written, kind)
+		if err != nil {
+			r.errs = append(r.errs, fmt.Errorf("%s %q %w", kind, written, err))
+			return ast.WalkContinue, nil
+		}
+		*dest = []byte(resolved)
+		if isLink && target != "" {
+			r.links = append(r.links, siteLink{node: link, dest: written, target: target})
+		}
+		return ast.WalkContinue, nil
+	})
+}
+
+// destination returns n's destination and its kind if n is a link or an
+// image.
+func destination(n ast.Node) (*[]byte, referenceKind, bool) {
+	switch n := n.(type) {
+	case *ast.Link:
+		return &n.Destination, linkReference, true
+	case *ast.Image:
+		return &n.Destination, imageReference, true
+	}
+	return nil, 0, false
+}
+
+// absoluteDestinations prefixes every site-absolute link and image
+// destination in doc, such as the /posts/x/ that Transform resolved a
+// relative link to, with the base URL base. Other destinations, such as
+// //host/x or https://..., are left alone. It returns a function that puts
+// the destinations back.
+func absoluteDestinations(doc ast.Node, base string) func() {
+	type change struct {
+		dest *[]byte
+		was  []byte
+	}
+	var changes []change
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		dest, _, ok := destination(n)
+		if ok && bytes.HasPrefix(*dest, []byte("/")) && !bytes.HasPrefix(*dest, []byte("//")) {
+			changes = append(changes, change{dest: dest, was: *dest})
+			*dest = append([]byte(base), *dest...)
+		}
+		return ast.WalkContinue, nil
+	})
+	return func() {
+		for _, c := range changes {
+			*c.dest = c.was
+		}
+	}
+}
+
+// referenceKind is what kind of reference a destination belongs to.
+type referenceKind int
+
+const (
+	// linkReference is a link's destination, which may point at a Post, a
+	// Page or an image.
+	linkReference referenceKind = iota
+	// imageReference is an image's source, which may only point at an
+	// image.
+	imageReference
+)
+
+// String names the kind in error messages: "link" or "image".
+func (k referenceKind) String() string {
+	if k == imageReference {
+		return "image"
+	}
+	return "link"
+}
+
+// resolve returns the site URL for the destination dest, of the given kind,
+// found in the Content Repository file from, and, for a Post or Page, the
+// Content Repository file it points at. Destinations that aren't relative
+// paths, such as absolute URLs, come back unchanged. An image may only point
+// into images/.
+func (x *references) resolve(from, dest string, kind referenceKind) (string, string, error) {
+	u, err := url.Parse(dest)
+	if err != nil {
+		return "", "", errors.New("is not a valid URL")
+	}
+	if u.Scheme != "" || u.Host != "" || u.Path == "" || strings.HasPrefix(u.Path, "/") {
+		return dest, "", nil
+	}
+	target := path.Join(path.Dir(from), u.Path)
+	if target == ".." || strings.HasPrefix(target, "../") {
+		return "", "", errors.New("escapes the Content Repository")
+	}
+
+	var (
+		site     *url.URL
+		document string
+	)
+	switch {
+	case strings.HasPrefix(target, imagesDir+"/"):
+		site = &url.URL{Path: "/" + target}
+	case kind == linkReference && path.Dir(target) == pagesDir && path.Ext(target) == markdownExt:
+		site = &url.URL{Path: models.PageURL(fileStem(target)), Fragment: u.Fragment}
+		document = target
+	case kind == linkReference && path.Dir(target) == postsDir && path.Ext(target) == markdownExt:
+		site = &url.URL{Path: models.PostURL(fileStem(target)), Fragment: u.Fragment}
+		document = target
+	default:
+		return "", "", fmt.Errorf("points at %s, which isn't on the site", target)
+	}
+	exists, err := x.exists(target)
+	if err != nil {
+		return "", "", err
+	}
+	if !exists {
+		return "", "", fmt.Errorf("points at %s, which is not found", target)
+	}
+	return site.String(), document, nil
+}
+
+// exists reports whether a reference can point at name: an image in
+// images/, or another regular file. A symlink isn't one, so a reference can't
+// reach outside the Content Repository through it.
+func (x *references) exists(name string) (bool, error) {
+	if !strings.HasPrefix(name, imagesDir+"/") {
+		info, err := fs.Lstat(x.content, name)
+		return err == nil && info.Mode().IsRegular(), nil
+	}
+	if x.images == nil {
+		names, err := imageFiles(x.content)
+		if err != nil {
+			return false, err
+		}
+		x.images = make(map[string]bool, len(names))
+		for _, n := range names {
+			x.images[n] = true
+		}
+	}
+	return x.images[name], nil
+}

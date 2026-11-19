@@ -1,0 +1,16 @@
+#!/bin/sh
+# Managed by Ivaldi. This file is the same in every Project and is kept
+# current for you, so don't edit it.
+#
+# Pre-commit gate: nothing lands in history that doesn't lint and pass the
+# tests. Enable it in a fresh clone with `make setup-hooks`.
+set -eu
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+	echo "pre-commit: golangci-lint is not on PATH, so 'make lint test' can't run." >&2
+	echo "Install golangci-lint v2: https://golangci-lint.run/welcome/install/" >&2
+	echo "To commit without these checks, run: git commit --no-verify" >&2
+	exit 1
+fi
+
+make lint test
