@@ -184,6 +184,50 @@ The server listens on `$PORT` and answers these probes:
 | `/readyz`   | readiness |
 | `/startupz` | startup   |
 
+### Deploying
+
+goblog ships no manifests, so here is everything a deployment needs:
+
+- **Image:** CI builds `goblog` for `linux/amd64` and `linux/arm64` with ko, on
+  `gcr.io/distroless/static-debian12:nonroot`, and pushes it to the
+  registry on merges to `main` and on version tags (`v0.1.0`, …). Pin a
+  version tag. The image has no shell, no `git` and no `known_hosts`, and
+  runs as the distroless `nonroot` user (UID 65532).
+- **Environment:** the variables in the table above. A typical deployment
+  sets `GOBLOG_CONTENT_URL` (an SSH URL), `GOBLOG_DEPLOY_KEY`,
+  `GOBLOG_SSH_KNOWN_HOSTS`, `GOBLOG_WEBHOOK_SECRET` and `GOBLOG_WORK_DIR`,
+  taking the secrets from wherever your cluster keeps them.
+  [`scripts/setup-secrets.sh`](scripts/setup-secrets.sh) creates them.
+- **Volume:** one writable volume mounted at `GOBLOG_WORK_DIR`, such as an
+  `emptyDir`. goblog keeps the clone and the rendered site there and rebuilds
+  both at startup, so nothing needs to persist and a PVC buys nothing.
+  goblog writes only under `GOBLOG_WORK_DIR` (the clone, the rendered site and
+  the `known_hosts` file) and logs only to stdout, so the root filesystem can
+  be read-only.
+- **Port and probes:** HTTP on `PORT` (default `8080`). Point liveness at
+  `/livez`, readiness at `/readyz` (not ready until the first render is
+  served) and, if you use one, the startup probe at `/startupz`.
+- **Webhook:** the Content Repository's push webhook goes to `/webhook` on
+  the site's public hostname.
+- **Replicas:** each replica clones, polls and renders on its own, with no
+  shared state. A webhook reaches only one of them, and the others catch up
+  within `GOBLOG_POLL_INTERVAL`. Spread replicas across nodes if you run
+  more than one.
+- **Resources:** request **32Mi** of memory and set a limit of **1Gi**, with
+  a small CPU request (such as 25m). goblog uses about 30 MB at steady state.
+  While it renders, it holds the whole site in memory, so the peak grows with
+  the site:
+
+  | Posts | Peak memory while rendering |
+  | ----- | --------------------------- |
+  | 30    | about 35 MB                 |
+  | 100   | about 39 MB                 |
+  | 200   | about 76 MB                 |
+
+  These were measured with synthetic Posts of 40 paragraphs each. The limit
+  is there to absorb that growth: it isn't reserved, and only the request is.
+  Rendering 200 Posts takes under a second.
+
 To render the site once from a local checkout of the Content Repository, for
 previewing, run:
 
