@@ -126,7 +126,8 @@ func sitePath(name string) string {
 	return "/" + name
 }
 
-// defaultHost is the status bar's host when site.yaml has no url.
+// defaultHost is the status bar's host when site.yaml sets neither host nor
+// url.
 const defaultHost = "goblog"
 
 // buildInfo is what the status bar and the info line say about the build.
@@ -135,8 +136,9 @@ type buildInfo struct {
 	// YYYY.MM.DD and as HH:MM with the zone's abbreviation at that time,
 	// e.g. "11:00 EDT".
 	Date, Time string
-	// Host is the first DNS label of the site's URL, e.g. "blog" for
-	// https://blog.example.com, or "goblog" if it has none.
+	// Host is site.yaml's host if set, otherwise the first DNS label of the
+	// site's URL, e.g. "blog" for https://blog.example.com, or "goblog" if
+	// it has none.
 	Host string
 	// Commit is the short hash of the Content Repository commit rendered,
 	// or "" if it's unknown.
@@ -147,11 +149,14 @@ type buildInfo struct {
 const shortCommitLen = 7
 
 // newBuildInfo describes a build rendered at now, in the site's timezone, of
-// the given commit.
-func newBuildInfo(now time.Time, tz *time.Location, siteURL, commit string) buildInfo {
-	host := defaultHost
-	if u, err := url.Parse(siteURL); err == nil && u.Hostname() != "" {
-		host, _, _ = strings.Cut(u.Hostname(), ".")
+// the given commit, for a site with the given settings.
+func newBuildInfo(now time.Time, tz *time.Location, settings models.SiteSettings, commit string) buildInfo {
+	host := settings.Host
+	if host == "" {
+		host = defaultHost
+		if u, err := url.Parse(settings.URL); err == nil && u.Hostname() != "" {
+			host, _, _ = strings.Cut(u.Hostname(), ".")
+		}
 	}
 	local := now.In(tz)
 	return buildInfo{

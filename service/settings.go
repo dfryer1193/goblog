@@ -33,6 +33,7 @@ type settingsYAML struct {
 	Author      string `yaml:"author"`
 	Description string `yaml:"description"`
 	URL         string `yaml:"url"`
+	Host        string `yaml:"host"`
 	Nav         []struct {
 		Name string `yaml:"name"`
 		Link string `yaml:"link"`
@@ -74,6 +75,7 @@ func parseSettings(src []byte) (models.SiteSettings, error) {
 		Title:       strings.TrimSpace(raw.Title),
 		Author:      strings.TrimSpace(raw.Author),
 		Description: strings.TrimSpace(raw.Description),
+		Host:        strings.TrimSpace(raw.Host),
 	}
 	if settings.Title == "" {
 		return models.SiteSettings{}, errors.New("title is required")

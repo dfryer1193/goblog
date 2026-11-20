@@ -117,7 +117,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 		return nil, err
 	}
 	b.out.tree = makeTree(b.posts, b.tags, b.pages, b.out.feed)
-	b.out.build = newBuildInfo(now, tz, settings.URL, opts.Commit)
+	b.out.build = newBuildInfo(now, tz, settings, opts.Commit)
 
 	for _, step := range buildSteps {
 		if err = step(b); err != nil {

@@ -64,6 +64,7 @@ url: https://blog.example.com  # required: absolute http(s), no query or fragmen
 author: D. Author
 description: Homelab things
 timezone: America/New_York     # an IANA name; decides when Publish Dates arrive (default UTC)
+host: example.com              # the status bar's and info line's label (default: url's first label, e.g. blog)
 nav:                           # the status bar's windows, in order
   - {name: posts, link: /}
   - {name: tags, link: /tags/}

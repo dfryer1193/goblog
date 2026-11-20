@@ -15,6 +15,9 @@ type SiteSettings struct {
 	// trailing slash. site.yaml must set it; it's "" only in the default
 	// settings, for a Content Repository with no site.yaml.
 	URL string
+	// Host is the label the status bar and info line show for the site.
+	// "" means the first DNS label of URL, e.g. "blog".
+	Host string
 	// Nav are the navigation entries, in the order the site shows them.
 	Nav []NavLink
 	// Timezone decides which day "today" is for Publish Dates. Nil means
