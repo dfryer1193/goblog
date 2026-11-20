@@ -73,3 +73,25 @@ func TestStatusBarHostIsGoblogWithoutSiteSettings(t *testing.T) {
 	assertContains(t, "status bar", page(t, site, "index.html"),
 		`<span class="right">`+sep+"2026.03.10"+sep+"15:00 UTC"+sep+"goblog"+sep+"</span>")
 }
+
+func TestStatusBarAndInfoLineUseSiteSettingsHostWhenSet(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"site.yaml": "title: blog\nurl: https://blog.werewolves.fyi\nhost: werewolves.fyi\n",
+	})
+	site := build(t, repo, now, service.BuildOptions{Commit: "0123456789abcdef"})
+
+	index := page(t, site, "index.html")
+	assertContains(t, "status bar", index,
+		`<span class="right">`+sep+"2026.03.10"+sep+"15:00 UTC"+sep+"werewolves.fyi"+sep+"</span>")
+	assertContains(t, "info line", infoLine(t, index), "<span>rendered from werewolves.fyi@0123456</span>")
+}
+
+func TestBlankSiteSettingsHostFallsBackToTheURLsFirstLabel(t *testing.T) {
+	repo := contentRepo(map[string]string{
+		"site.yaml": "title: blog\nurl: https://blog.werewolves.fyi\nhost: \"  \"\n",
+	})
+	site := build(t, repo, now, service.BuildOptions{})
+
+	assertContains(t, "status bar", page(t, site, "index.html"),
+		`<span class="right">`+sep+"2026.03.10"+sep+"15:00 UTC"+sep+"blog"+sep+"</span>")
+}
