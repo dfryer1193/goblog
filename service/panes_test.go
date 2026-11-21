@@ -86,6 +86,7 @@ func TestOnPhonesTheStatusBarScrollsWithMenuAndSessionPinned(t *testing.T) {
 		".tbar { overflow-x: auto;",
 		".ham { position: sticky; left: 0;",
 		".tbar .sess { position: sticky; left: var(--ham-w);",
+		".pane { overflow: clip; }",
 		".tbar::after {",
 		"animation-timeline: scroll(nearest inline);",
 	} {

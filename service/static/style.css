@@ -215,9 +215,11 @@ ul.tags li { display: inline; margin-right: 1ch; }
   .ham { display: block; }
 
   /* The page scrolls, not the pane, so the browser's bars can collapse and a
-     tap on the top of the screen scrolls back up. */
+     tap on the top of the screen scrolls back up. clip, not visible: the pane
+     still clips its title label at the border, as on wide screens, without
+     becoming a scroller itself. */
   .frame { height: auto; min-height: 100vh; min-height: 100dvh; }
-  .pane { overflow: visible; }
+  .pane { overflow: clip; }
 
   /* The status bar stays at the top and scrolls sideways (windows, date, time,
      host) under ☰ and [title], which stay pinned at the left. */
