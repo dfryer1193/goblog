@@ -44,7 +44,13 @@
 </body>
 </html>
 {{- define "tree"}}<div class="tree"><strong>~/</strong>
-{{range .Tree}}{{.Prefix}}<a{{with .Class}} class="{{.}}"{{end}} href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>
+{{range .Tree -}}
+{{if .More}}<details class="more"{{if .MoreOpen}} open{{end}}><summary>{{.More}}...</summary>{{end -}}
+{{if .Fold}}<details class="fold" open><summary>{{end -}}
+{{.Prefix}}<a{{with .Class}} class="{{.}}"{{end}} href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>
+{{- if .Fold}}</summary>{{else}}{{"\n"}}{{end -}}
+{{if .EndMore}}</details>{{end -}}
+{{if .EndFold}}</details>{{end -}}
 {{end}}</div>{{end}}
 {{- define "postinfo"}}
 {{- if .PublishDate.IsZero}}draft

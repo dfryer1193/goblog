@@ -127,6 +127,15 @@ a:hover { text-decoration: underline; }
 .tree { white-space: pre; line-height: 1.5; }
 .tree a.sel { background: var(--bar-bg); }
 .tree a.tag { color: var(--dim); }
+/* Folders fold, and a long folder's "..." opens to the rest: <details>, so no
+   JavaScript. The name still links; the marker after it toggles. */
+.tree summary { display: block; list-style: none; cursor: pointer; }
+.tree summary::-webkit-details-marker { display: none; }
+.tree .fold > summary::after { content: " ▾"; color: var(--dim); }
+.tree .fold:not([open]) > summary::after { content: " ▸"; }
+.tree .more > summary { color: var(--dim); }
+.tree .more > summary:hover { color: var(--fg); }
+.tree .more[open] > summary { display: none; }
 
 /* Plain info line along the bottom; deliberately not a statusline. */
 .info {
