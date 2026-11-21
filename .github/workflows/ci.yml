@@ -5,6 +5,7 @@ name: ci
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
     tags: ['v*.*.*']
@@ -18,7 +19,11 @@ concurrency:
 
 jobs:
   go:
-    uses: worldtree-industries/workflows/.github/workflows/go.yml@41fec6d9e021b241b9ae647b6b2f5a7e914b6795 # v1.1.0
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    uses: worldtree-industries/workflows/.github/workflows/go.yml@1871647922e0739445221c34f8917ab1566e46b1 # v1.2.0
     with:
       platforms: linux/amd64,linux/arm64
     secrets:
