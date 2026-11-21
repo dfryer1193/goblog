@@ -32,6 +32,8 @@ type pageData struct {
 	Site *models.SiteSettings
 	// Stylesheet is the stylesheet's site path. Filled in by output.page.
 	Stylesheet string
+	// TreeScript is the tree script's site path. Filled in by output.page.
+	TreeScript string
 	// Path is the page's own site path, e.g. /posts/x/. Filled in by
 	// output.page.
 	Path string
@@ -84,6 +86,8 @@ type output struct {
 	settings *models.SiteSettings
 	// stylesheet is passed to every page as pageData.Stylesheet.
 	stylesheet string
+	// treeScript is passed to every page as pageData.TreeScript.
+	treeScript string
 	// tree is the tree pane, with nothing selected.
 	tree []treeLine
 	// build is passed to every page as pageData.Build.
@@ -104,7 +108,7 @@ func newOutput(settings *models.SiteSettings) (*output, error) {
 		return nil, fmt.Errorf("listing templates: %w", err)
 	}
 	out := &output{
-		settings: settings, stylesheet: static.Stylesheet,
+		settings: settings, stylesheet: static.Stylesheet, treeScript: static.TreeScript,
 		templates: map[string]*template.Template{}, files: maps.Clone(static.files),
 	}
 	if hasFeed(settings) {
@@ -132,6 +136,7 @@ func (o *output) page(name, kind string, data pageData) error {
 	}
 	data.Site = o.settings
 	data.Stylesheet = o.stylesheet
+	data.TreeScript = o.treeScript
 	data.Path = sitePath(name)
 	data.Tree = treeFor(o.tree, data.Path)
 	data.Windows = windowsFor(o.settings.Nav, &data)

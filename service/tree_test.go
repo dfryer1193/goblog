@@ -51,10 +51,10 @@ func TestTreeFoldersAreCollapsibleDetailsOpenByDefault(t *testing.T) {
 
 	tree := between(t, page(t, site, "about/index.html"), `<aside class="pane side">`, `</aside>`)
 	assertInOrder(t, "tree", tree,
-		`<details class="fold" open><summary>├── <a href="/">posts/</a></summary>`,
+		`<details class="fold" data-fold="posts/" open><summary>├── <a href="/">posts/</a></summary>`,
 		`│   ├── <a href="/posts/picluster/">picluster.md</a>`+"\n",
 		`│   └── <a href="/posts/older/">older.md</a>`+"\n</details>",
-		`<details class="fold" open><summary>├── <a href="/tags/">tags/</a></summary>`,
+		`<details class="fold" data-fold="tags/" open><summary>├── <a href="/tags/">tags/</a></summary>`,
 		`│   └── <a class="tag" href="/tags/talos/">talos</a>`+"\n</details>",
 		`├── <a class="sel" href="/about/" aria-current="page">about.md</a>`+"\n",
 		`└── <a href="/feed.xml">feed.xml</a>`+"\n")
@@ -82,13 +82,13 @@ func TestAFolderOfMoreThanTwentyShowsTwentyThenAnEllipsisForTheRest(t *testing.T
 	assertInOrder(t, "posts", tree,
 		`│   ├── <a href="/posts/p25/">p25.md</a>`+"\n",
 		`│   ├── <a href="/posts/p06/">p06.md</a>`+"\n",
-		`<details class="more"><summary>│   └── ...</summary>`,
+		`<details class="more"><summary>│   └── <span class="ell">...</span></summary>`,
 		`│   ├── <a href="/posts/p05/">p05.md</a>`+"\n",
 		`│   └── <a href="/posts/p01/">p01.md</a>`+"\n</details></details>",
-		`<details class="fold" open><summary>├── <a href="/tags/">tags/</a></summary>`)
+		`<details class="fold" data-fold="tags/" open><summary>├── <a href="/tags/">tags/</a></summary>`)
 	assertInOrder(t, "tags", tree,
 		`│   ├── <a class="tag" href="/tags/t20/">t20</a>`+"\n",
-		`<details class="more"><summary>│   └── ...</summary>`,
+		`<details class="more"><summary>│   └── <span class="ell">...</span></summary>`,
 		`│   ├── <a class="tag" href="/tags/t21/">t21</a>`+"\n",
 		`│   └── <a class="tag" href="/tags/t25/">t25</a>`+"\n</details></details>")
 	if strings.Count(tree, "<details") != strings.Count(tree, "</details>") {
@@ -111,7 +111,7 @@ func TestTheEllipsisIsOpenOnAPageItHides(t *testing.T) {
 
 	hidden := between(t, page(t, site, "posts/p03/index.html"), `<aside class="pane side">`, `</aside>`)
 	assertInOrder(t, "tree on a hidden Post", hidden,
-		`<details class="more" open><summary>│   └── ...</summary>`,
+		`<details class="more" open><summary>│   └── <span class="ell">...</span></summary>`,
 		`│   ├── <a class="sel" href="/posts/p03/" aria-current="page">p03.md</a>`)
 	// The tags folder's ellipsis stays closed: p03's page isn't in it.
 	assertContains(t, "tags on a hidden Post", hidden,

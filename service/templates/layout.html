@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{with .Title}}{{.}} · {{end}}{{.Site.Title}}</title>
 <link rel="stylesheet" href="{{.Stylesheet}}">
+<script src="{{.TreeScript}}" defer></script>
 {{- with .Site.Description}}
 <meta name="description" content="{{.}}">
 {{- end}}
@@ -45,8 +46,8 @@
 </html>
 {{- define "tree"}}<div class="tree"><strong>~/</strong>
 {{range .Tree -}}
-{{if .More}}<details class="more"{{if .MoreOpen}} open{{end}}><summary>{{.More}}...</summary>{{end -}}
-{{if .Fold}}<details class="fold" open><summary>{{end -}}
+{{if .More}}<details class="more"{{if .MoreOpen}} open{{end}}><summary>{{.More}}<span class="ell">...</span></summary>{{end -}}
+{{if .Fold}}<details class="fold" data-fold="{{.Name}}" open><summary>{{end -}}
 {{.Prefix}}<a{{with .Class}} class="{{.}}"{{end}} href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>
 {{- if .Fold}}</summary>{{else}}{{"\n"}}{{end -}}
 {{if .EndMore}}</details>{{end -}}
