@@ -43,7 +43,15 @@ a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* The frame: status bar, panes, info line. The panes scroll, not the page. */
-.frame { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; height: 100dvh; }
+.frame {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* minmax(0, …): no row, the nowrap status bar above all, can widen the page
+     past the screen. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+}
 
 /* Status bar (status-position top), also the site navigation:
    [session] // [ #I ][ #W:#T ] // #I #W // ...     // date // time // host // */
@@ -63,7 +71,10 @@ a:hover { text-decoration: underline; }
 .tbar a:hover { text-decoration: none; }
 .tbar .sep { color: var(--colour008); padding: 0 1ch; }
 .tbar .sess { padding-left: 1ch; font-weight: 700; }
-.tbar .wins { align-self: stretch; overflow: hidden; }
+/* The windows scroll sideways inside the bar when they don't fit. */
+.tbar .wins { align-self: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tbar .wins::-webkit-scrollbar { display: none; }
+.tbar .win, .tbar .sep { flex: none; }
 .tbar .win { align-self: stretch; display: flex; align-items: center; }
 .tbar .win.cur { color: var(--bg); }
 .tbar .win.cur .wi, .tbar .win.cur .wn {
@@ -124,7 +135,9 @@ a:hover { text-decoration: underline; }
 .pane.active.err { border-color: var(--red); }
 .pane.active.err > .label { color: var(--red); }
 
-.tree { white-space: pre; line-height: 1.5; }
+/* line-height: normal is the font's own ascent + descent, the height its
+   box-drawing glyphs are drawn to, so │ ├ └ join from line to line. */
+.tree { white-space: pre; line-height: normal; }
 .tree a.sel { background: var(--bar-bg); }
 .tree a.tag { color: var(--dim); }
 /* Folders fold, and a long folder's "..." opens to the rest: <details>, so they
@@ -152,6 +165,7 @@ a:hover { text-decoration: underline; }
   border-top: 1px solid var(--rule);
 }
 .info a { color: var(--dim); text-decoration: underline; }
+.info > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* Content. */
 .content { max-width: 80ch; }
@@ -190,9 +204,89 @@ ul.tags li { display: inline; margin-right: 1ch; }
 .body table { border-collapse: collapse; margin: 0 0 1em; }
 .body th, .body td { border: 1px solid var(--pane-border); padding: .2em 1ch; }
 
+@keyframes tbar-more {
+  0%, 92% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 @media (max-width: 760px) {
-  .panes { grid-template-columns: 1fr; }
+  .panes { grid-template-columns: minmax(0, 1fr); }
   .pane.side { display: none; }
   .ham { display: block; }
-  .tbar .right { display: none; }
+
+  /* The page scrolls, not the pane, so the browser's bars can collapse and a
+     tap on the top of the screen scrolls back up. clip, not visible: the pane
+     still clips its title label at the border, as on wide screens, without
+     becoming a scroller itself. */
+  .frame { height: auto; min-height: 100vh; min-height: 100dvh; }
+  .pane { overflow: clip; }
+
+  /* The status bar stays at the top and scrolls sideways (windows, date, time,
+     host) under ☰ and [title], which stay pinned at the left. */
+  .tbar { overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; --ham-w: 4ch; position: sticky; top: 0; font-size: 1rem; }
+  .tbar::-webkit-scrollbar { display: none; }
+  .tbar > * { flex: none; }
+  .tbar .wins { overflow: visible; }
+  .tbar .grow { flex: 1 0 1ch; }
+  .tbar .right { overflow: visible; }
+  .ham { position: sticky; left: 0; z-index: 1; width: var(--ham-w); background: var(--bar-bg); }
+  .ham > summary { padding: 0; justify-content: center; }
+  .ham .drawer { inset: var(--bar-h) 0 0 0; }
+  .tbar .sess { position: sticky; left: var(--ham-w); z-index: 1; padding-right: 1ch; background: var(--bar-bg); }
+  .tbar .sess::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 100%;
+    width: 2ch;
+    background: linear-gradient(to right, var(--bar-bg), transparent);
+    pointer-events: none;
+  }
+  .tbar .sess + .sep { padding-left: 0; }
+  .tbar .right { padding-right: 3ch; }
+  /* More to the right: a fade pinned to the bar's right edge. Where scroll-
+     driven animations work, it also shows a ›, and only while the bar can
+     still scroll right; otherwise the fade only ever covers the end padding. */
+  .tbar::after {
+    content: "";
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    flex: none;
+    width: 3ch;
+    margin-left: -3ch;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: .6ch;
+    color: var(--fg);
+    background: linear-gradient(to right, transparent, var(--bar-bg) 65%);
+    pointer-events: none;
+  }
+  @supports (animation-timeline: scroll()) {
+    .tbar::after {
+      content: "›";
+      opacity: 0;
+      animation: tbar-more linear both;
+      animation-timeline: scroll(nearest inline);
+    }
+  }
+
+  /* The post list stacks: date, then title, tags and excerpt. */
+  .posts > li { grid-template-columns: minmax(0, 1fr); }
+  .posts p, .posts ul.tags { grid-column: 1; }
+
+  /* The drawer's tree is bigger to tap: scaled up, not spaced out, so its
+     lines still join. Each link's tap area also reaches a little past its
+     name. */
+  .ham .drawer { font-size: 19px; }
+  .ham .tree a { position: relative; }
+  .ham .tree a::after { content: ""; position: absolute; inset: 0 -1ch; }
+
+  /* The info line wraps, and keeps the page's own info (published, words,
+     read time; post count) over the build. */
+  .info { white-space: normal; flex-wrap: wrap; }
+  .info:has(> span:last-child:not(:empty)) > span:first-child { display: none; }
 }
+

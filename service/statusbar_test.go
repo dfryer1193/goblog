@@ -95,3 +95,12 @@ func TestBlankSiteSettingsHostFallsBackToTheURLsFirstLabel(t *testing.T) {
 	assertContains(t, "status bar", page(t, site, "index.html"),
 		`<span class="right">`+sep+"2026.03.10"+sep+"15:00 UTC"+sep+"blog"+sep+"</span>")
 }
+
+func TestStatusBarSessionLinksHome(t *testing.T) {
+	site := build(t, designRepo(), now, service.BuildOptions{})
+
+	for _, name := range []string{"index.html", "posts/picluster/index.html", "about/index.html", "404.html"} {
+		bar := between(t, page(t, site, name), `<header class="tbar">`, "</header>")
+		assertContains(t, name, bar, `<a class="sess" href="/">[Werewolf Notes]</a>`+sep)
+	}
+}

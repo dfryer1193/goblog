@@ -18,7 +18,7 @@
 <div class="frame">
 <header class="tbar">
 <details class="ham"><summary aria-label="files">☰</summary><nav class="drawer" aria-label="files">{{template "tree" .}}</nav></details>
-<span class="sess">[{{.Site.Title}}]</span><span class="sep">//</span>
+<a class="sess" href="/">[{{.Site.Title}}]</a><span class="sep">//</span>
 <nav class="wins" aria-label="site">
 {{- range .Windows}}
 {{- if .Current}}<a class="win cur" href="{{.Link}}" aria-current="page"><span class="wi">{{.Index}}</span><span class="wn">{{.Name}}:{{.Title}}</span></a>
