@@ -206,19 +206,46 @@ ul.tags li { display: inline; margin-right: 1ch; }
   .panes { grid-template-columns: minmax(0, 1fr); }
   .pane.side { display: none; }
   .ham { display: block; }
-  .tbar .right { display: none; }
-  /* Phones: the post list stacks (date, then title, tags and excerpt), the
-     drawer's tree lines are taller to tap, and the info line keeps the page's
-     own info (published, words, read time; post count) over the build. */
+
   /* The page scrolls, not the pane, so the browser's bars can collapse and a
-     tap on the top of the screen scrolls back up; the status bar stays put. */
+     tap on the top of the screen scrolls back up. */
   .frame { height: auto; min-height: 100vh; min-height: 100dvh; }
-  .tbar { position: sticky; top: 0; font-size: 1rem; }
   .pane { overflow: visible; }
+
+  /* The status bar stays at the top and scrolls sideways (windows, date, time,
+     host) under ☰ and [title], which stay pinned at the left. */
+  .tbar { overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; --ham-w: 4ch; position: sticky; top: 0; font-size: 1rem; }
+  .tbar::-webkit-scrollbar { display: none; }
+  .tbar > * { flex: none; }
+  .tbar .wins { overflow: visible; }
+  .tbar .grow { flex: 1 0 1ch; }
+  .tbar .right { overflow: visible; padding-right: 1ch; }
+  .ham { position: sticky; left: 0; z-index: 1; width: var(--ham-w); background: var(--bar-bg); }
+  .ham > summary { padding: 0; justify-content: center; }
   .ham .drawer { inset: var(--bar-h) 0 0 0; }
-  .info { white-space: normal; flex-wrap: wrap; }
+  .tbar .sess { position: sticky; left: var(--ham-w); z-index: 1; padding-right: 1ch; background: var(--bar-bg); }
+  .tbar .sess::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 100%;
+    width: 2ch;
+    background: linear-gradient(to right, var(--bar-bg), transparent);
+    pointer-events: none;
+  }
+  .tbar .sess + .sep { padding-left: 0; }
+
+  /* The post list stacks: date, then title, tags and excerpt. */
   .posts > li { grid-template-columns: minmax(0, 1fr); }
   .posts p, .posts ul.tags { grid-column: 1; }
+
+  /* The drawer's tree lines are taller to tap. */
   .ham .tree { line-height: 2.1; }
+
+  /* The info line wraps, and keeps the page's own info (published, words,
+     read time; post count) over the build. */
+  .info { white-space: normal; flex-wrap: wrap; }
   .info:has(> span:last-child:not(:empty)) > span:first-child { display: none; }
 }
+
