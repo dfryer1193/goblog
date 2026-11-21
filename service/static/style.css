@@ -43,7 +43,15 @@ a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* The frame: status bar, panes, info line. The panes scroll, not the page. */
-.frame { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; height: 100dvh; }
+.frame {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* minmax(0, …): no row, the nowrap status bar above all, can widen the page
+     past the screen. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+}
 
 /* Status bar (status-position top), also the site navigation:
    [session] // [ #I ][ #W:#T ] // #I #W // ...     // date // time // host // */
@@ -63,7 +71,10 @@ a:hover { text-decoration: underline; }
 .tbar a:hover { text-decoration: none; }
 .tbar .sep { color: var(--colour008); padding: 0 1ch; }
 .tbar .sess { padding-left: 1ch; font-weight: 700; }
-.tbar .wins { align-self: stretch; overflow: hidden; }
+/* The windows scroll sideways inside the bar when they don't fit. */
+.tbar .wins { align-self: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tbar .wins::-webkit-scrollbar { display: none; }
+.tbar .win, .tbar .sep { flex: none; }
 .tbar .win { align-self: stretch; display: flex; align-items: center; }
 .tbar .win.cur { color: var(--bg); }
 .tbar .win.cur .wi, .tbar .win.cur .wn {
@@ -152,6 +163,7 @@ a:hover { text-decoration: underline; }
   border-top: 1px solid var(--rule);
 }
 .info a { color: var(--dim); text-decoration: underline; }
+.info > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* Content. */
 .content { max-width: 80ch; }
@@ -191,8 +203,22 @@ ul.tags li { display: inline; margin-right: 1ch; }
 .body th, .body td { border: 1px solid var(--pane-border); padding: .2em 1ch; }
 
 @media (max-width: 760px) {
-  .panes { grid-template-columns: 1fr; }
+  .panes { grid-template-columns: minmax(0, 1fr); }
   .pane.side { display: none; }
   .ham { display: block; }
   .tbar .right { display: none; }
+  /* Phones: the post list stacks (date, then title, tags and excerpt), the
+     drawer's tree lines are taller to tap, and the info line keeps the page's
+     own info (published, words, read time; post count) over the build. */
+  /* The page scrolls, not the pane, so the browser's bars can collapse and a
+     tap on the top of the screen scrolls back up; the status bar stays put. */
+  .frame { height: auto; min-height: 100vh; min-height: 100dvh; }
+  .tbar { position: sticky; top: 0; font-size: 1rem; }
+  .pane { overflow: visible; }
+  .ham .drawer { inset: var(--bar-h) 0 0 0; }
+  .info { white-space: normal; flex-wrap: wrap; }
+  .posts > li { grid-template-columns: minmax(0, 1fr); }
+  .posts p, .posts ul.tags { grid-column: 1; }
+  .ham .tree { line-height: 2.1; }
+  .info:has(> span:last-child:not(:empty)) > span:first-child { display: none; }
 }
