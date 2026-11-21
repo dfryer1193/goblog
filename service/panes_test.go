@@ -86,10 +86,23 @@ func TestOnPhonesTheStatusBarScrollsWithMenuAndSessionPinned(t *testing.T) {
 		".tbar { overflow-x: auto;",
 		".ham { position: sticky; left: 0;",
 		".tbar .sess { position: sticky; left: var(--ham-w);",
+		".tbar::after {",
+		"animation-timeline: scroll(nearest inline);",
 	} {
 		assertContains(t, "narrow-screen rules", narrow, rule)
 	}
 	if strings.Contains(narrow, ".tbar .right { display: none; }") {
 		t.Error("phones still hide the status bar's date, time and host")
+	}
+}
+
+func TestTheTreeIsSetAtTheFontsNaturalLineHeightSoItsLinesJoin(t *testing.T) {
+	site := build(t, designRepo(), now, service.BuildOptions{})
+
+	css := page(t, site, stylesheetPath(t, site))
+	assertContains(t, "stylesheet", css, ".tree { white-space: pre; line-height: normal; }")
+	narrow := between(t, css, "@media (max-width: 760px) {", "\n}")
+	if strings.Contains(narrow, "line-height: 2.1") {
+		t.Error("phones still space the drawer's tree out, breaking its lines")
 	}
 }

@@ -135,7 +135,9 @@ a:hover { text-decoration: underline; }
 .pane.active.err { border-color: var(--red); }
 .pane.active.err > .label { color: var(--red); }
 
-.tree { white-space: pre; line-height: 1.5; }
+/* line-height: normal is the font's own ascent + descent, the height its
+   box-drawing glyphs are drawn to, so │ ├ └ join from line to line. */
+.tree { white-space: pre; line-height: normal; }
 .tree a.sel { background: var(--bar-bg); }
 .tree a.tag { color: var(--dim); }
 /* Folders fold, and a long folder's "..." opens to the rest: <details>, so they
@@ -202,6 +204,11 @@ ul.tags li { display: inline; margin-right: 1ch; }
 .body table { border-collapse: collapse; margin: 0 0 1em; }
 .body th, .body td { border: 1px solid var(--pane-border); padding: .2em 1ch; }
 
+@keyframes tbar-more {
+  0%, 92% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 @media (max-width: 760px) {
   .panes { grid-template-columns: minmax(0, 1fr); }
   .pane.side { display: none; }
@@ -219,7 +226,7 @@ ul.tags li { display: inline; margin-right: 1ch; }
   .tbar > * { flex: none; }
   .tbar .wins { overflow: visible; }
   .tbar .grow { flex: 1 0 1ch; }
-  .tbar .right { overflow: visible; padding-right: 1ch; }
+  .tbar .right { overflow: visible; }
   .ham { position: sticky; left: 0; z-index: 1; width: var(--ham-w); background: var(--bar-bg); }
   .ham > summary { padding: 0; justify-content: center; }
   .ham .drawer { inset: var(--bar-h) 0 0 0; }
@@ -235,13 +242,45 @@ ul.tags li { display: inline; margin-right: 1ch; }
     pointer-events: none;
   }
   .tbar .sess + .sep { padding-left: 0; }
+  .tbar .right { padding-right: 3ch; }
+  /* More to the right: a fade pinned to the bar's right edge. Where scroll-
+     driven animations work, it also shows a ›, and only while the bar can
+     still scroll right; otherwise the fade only ever covers the end padding. */
+  .tbar::after {
+    content: "";
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    flex: none;
+    width: 3ch;
+    margin-left: -3ch;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: .6ch;
+    color: var(--fg);
+    background: linear-gradient(to right, transparent, var(--bar-bg) 65%);
+    pointer-events: none;
+  }
+  @supports (animation-timeline: scroll()) {
+    .tbar::after {
+      content: "›";
+      opacity: 0;
+      animation: tbar-more linear both;
+      animation-timeline: scroll(nearest inline);
+    }
+  }
 
   /* The post list stacks: date, then title, tags and excerpt. */
   .posts > li { grid-template-columns: minmax(0, 1fr); }
   .posts p, .posts ul.tags { grid-column: 1; }
 
-  /* The drawer's tree lines are taller to tap. */
-  .ham .tree { line-height: 2.1; }
+  /* The drawer's tree is bigger to tap: scaled up, not spaced out, so its
+     lines still join. Each link's tap area also reaches a little past its
+     name. */
+  .ham .drawer { font-size: 19px; }
+  .ham .tree a { position: relative; }
+  .ham .tree a::after { content: ""; position: absolute; inset: 0 -1ch; }
 
   /* The info line wraps, and keeps the page's own info (published, words,
      read time; post count) over the build. */
