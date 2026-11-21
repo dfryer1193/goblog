@@ -82,8 +82,8 @@ func TestEveryFileUnderAssetsAndFontsHasAContentHashInItsName(t *testing.T) {
 			}
 		}
 	}
-	if n != 4 {
-		t.Errorf("got %d files under assets/ and fonts/, want the stylesheet and three fonts", n)
+	if n != 5 {
+		t.Errorf("got %d files under assets/ and fonts/, want the stylesheet, the tree script and three fonts", n)
 	}
 }
 

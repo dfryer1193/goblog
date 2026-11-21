@@ -27,6 +27,10 @@ const (
 	treeBlank = "    "
 )
 
+// treeFolderShown is how many entries a tree folder shows before an
+// ellipsis that opens to the rest.
+const treeFolderShown = 20
+
 // treeLine is one line of the tree pane, which lists the site like `tree`
 // lists a directory: Posts, tags, Pages and the feed.
 type treeLine struct {
@@ -41,6 +45,20 @@ type treeLine struct {
 	Class string
 	// Current reports whether the entry is the page being shown.
 	Current bool
+
+	// Fold reports whether the line heads a folder with entries under it,
+	// which then collapse into it: the line is a <details>' summary.
+	Fold bool
+	// More, if not "", is the tree drawing of an ellipsis line before this
+	// one, standing for this entry and the rest of its folder: a <details>
+	// whose summary is the ellipsis, so it opens to them with no JavaScript.
+	More string
+	// MoreOpen reports whether that ellipsis starts open, because it hides
+	// the page being shown.
+	MoreOpen bool
+	// EndMore and EndFold report whether the line is the last under an
+	// ellipsis and under a folder, closing their <details>.
+	EndMore, EndFold bool
 }
 
 // makeTree lays out the tree pane for the listed posts, their tags, the
@@ -72,9 +90,18 @@ func makeTree(posts []*models.Post, tags []*models.Tag, pages []*models.Page, fe
 		if last {
 			indent = treeBlank
 		}
+		n := len(folder.children)
 		for j, child := range folder.children {
-			child.Prefix = indent + branch(j, len(folder.children))
+			child.Prefix = indent + branch(j, n)
+			if j == treeFolderShown && n > treeFolderShown {
+				child.More = indent + treeLast
+			}
+			child.EndMore = j == n-1 && n > treeFolderShown
+			child.EndFold = j == n-1
 			lines = append(lines, child)
+		}
+		if n > 0 {
+			lines[len(lines)-n-1].Fold = true
 		}
 	}
 	return lines
@@ -94,13 +121,27 @@ func branch(i, n int) string {
 	return treeEntry
 }
 
-// treeFor returns tree with the entry for the page at sitePath selected.
+// treeFor returns tree with the entry for the page at sitePath selected,
+// and the ellipsis hiding it, if any, open.
 func treeFor(tree []treeLine, sitePath string) []treeLine {
 	lines := make([]treeLine, len(tree))
+	more := -1 // the line that starts the ellipsis the loop is under
 	for i, line := range tree {
+		if line.More != "" {
+			more = i
+		}
 		if line.URL == sitePath {
 			line.Current = true
 			line.Class = strings.TrimSpace(line.Class + " sel")
+			if more >= 0 {
+				lines[more].MoreOpen = true
+				if more == i {
+					line.MoreOpen = true
+				}
+			}
+		}
+		if line.EndMore {
+			more = -1
 		}
 		lines[i] = line
 	}

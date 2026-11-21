@@ -21,13 +21,18 @@ import (
 // their names; every other one gets a content hash in its name.
 const staticDir = "static"
 
+// treeScriptSource is the tree pane's script in staticFS: progressive
+// enhancement that remembers folded folders across pages. It's served under
+// /assets/ like every other versioned static file.
+const treeScriptSource = "static/assets/tree.js"
+
 // stylesheetSource is the stylesheet template in staticFS. {{asset "x"}} in
 // it is the site path of staticFS's static/x, and {{palette}} is
 // PaletteCSS. It's served under /assets/.
 const stylesheetSource = "static/style.css"
 
-// staticFS holds the static assets: the stylesheet and the fonts, with their
-// licence.
+// staticFS holds the static assets: the stylesheet, the tree script and the
+// fonts, with their licence.
 //
 //go:embed static
 var staticFS embed.FS
@@ -38,6 +43,8 @@ var staticFS embed.FS
 type assets struct {
 	// Stylesheet is the stylesheet's site path, e.g. /assets/style.0123abcd45.css.
 	Stylesheet string
+	// TreeScript is the tree script's site path, e.g. /assets/tree.0123abcd45.js.
+	TreeScript string
 	// files are the output files, by output path.
 	files map[string][]byte
 }
@@ -72,6 +79,7 @@ func makeAssets() (*assets, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing static files: %w", err)
 	}
+	a.TreeScript = paths[strings.TrimPrefix(treeScriptSource, staticDir+"/")]
 
 	src, err := staticFS.ReadFile(stylesheetSource)
 	if err != nil {

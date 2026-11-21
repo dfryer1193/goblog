@@ -7,7 +7,8 @@ publishing step.
 > **Status:** goblog is being rebuilt from scratch. The server clones the
 > Content Repository, keeps it in sync through the webhook and polling, and
 > serves the whole site (Posts, Pages, tags, the Atom feed and the sitemap) in
-> its tmux-styled design, pre-compressed and with no JavaScript.
+> its tmux-styled design, pre-compressed. The only JavaScript is a small, optional
+> script that remembers which tree folders the reader folded.
 > `goblog build` renders the same site locally. Deployment docs are still to
 > come. The previous implementation is kept under the `legacy` tag for
 > reference.
