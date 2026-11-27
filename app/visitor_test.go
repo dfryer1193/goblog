@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"regexp"
 	"testing"
+	"time"
 )
 
 // visitorID is the Visitor ID on line, or "" if it has none.
@@ -91,5 +92,29 @@ func TestTheClientIPIsTheRightmostForwardedForEntryOrThePeer(t *testing.T) {
 	}
 	if noHeader != peer {
 		t.Errorf("no X-Forwarded-For got Visitor ID %q, want %q, as from the TCP peer 127.0.0.1", noHeader, peer)
+	}
+}
+
+func TestRewritingTheSaltFileChangesVisitorIDsWithoutARestart(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	before := visitFrom(t, g, "203.0.113.7", firefox)
+
+	g.writeSalt(t, "the-next-days-salt-0123456789abc")
+	// goblog checks the salt file at most every 5 seconds.
+	g.clock.advance(5 * time.Second)
+
+	after := visitFrom(t, g, "203.0.113.7", firefox)
+	if after == "" || after == before {
+		t.Errorf("after the salt changed, the same IP and User-Agent got Visitor ID %q, want a new one (was %q)",
+			after, before)
+	}
+	if again := visitFrom(t, g, "203.0.113.7", firefox); again != after {
+		t.Errorf(
+			"under the new salt, the same IP and User-Agent got Visitor IDs %q and %q, want the same",
+			after,
+			again,
+		)
 	}
 }

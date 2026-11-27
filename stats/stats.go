@@ -46,7 +46,7 @@ type Stats struct {
 	settings Settings
 	now      func() time.Time
 	lines    *emitter
-	salt     []byte
+	salt     *salt
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
@@ -69,9 +69,7 @@ func New(cfg Config) *Stats {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
-	if cfg.SaltFile != "" {
-		s.salt = readSalt(cfg.SaltFile)
-	}
+	s.salt = newSalt(cfg.SaltFile, s.now)
 	s.registry = prometheus.NewRegistry()
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
@@ -115,8 +113,8 @@ func (s *Stats) record(r *http.Request, status int) {
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
 	l := line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind}
-	if s.salt != nil {
-		l.VisitorID = visitorIDFor(s.salt, clientIP(r), r.UserAgent())
+	if key := s.salt.current(); key != nil {
+		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
 	}
 	s.emit(l)
 }

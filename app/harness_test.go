@@ -293,6 +293,13 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	}
 }
 
+// writeSalt replaces the salt file's contents with salt, as the daily
+// rotation does.
+func (g *goblog) writeSalt(t *testing.T, salt string) {
+	t.Helper()
+	writeFile(t, g.saltFile, salt)
+}
+
 // testSalt is the salt startGoblog writes to the salt file: 32 bytes.
 const testSalt = "test-salt-0123456789abcdefghijkl"
 
