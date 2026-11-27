@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
@@ -17,8 +18,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// labelKind is the metrics' label for the kind of page.
-const labelKind = "kind"
+// The metrics' labels.
+const (
+	// labelKind is the kind of page.
+	labelKind = "kind"
+	// labelBot is the Bot name.
+	labelBot = "bot"
+	// labelStatusClass is the class of the response's status, such as 2xx.
+	labelStatusClass = "status_class"
+)
 
 // Settings is the StatsConfig: the settings Site Statistics read on every
 // request, so changes apply live.
@@ -47,6 +55,9 @@ type Stats struct {
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
+	// botRequests counts Bot requests by Bot name, status class and kind
+	// of page.
+	botRequests *prometheus.CounterVec
 	// others counts the requests that are none of the other classes, by
 	// kind of page.
 	others *prometheus.CounterVec
@@ -81,7 +92,11 @@ func New(cfg Config) *Stats {
 		Name: "goblog_other_requests_total",
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
-	s.registry.MustRegister(s.pageViews, s.others)
+	s.botRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_bot_requests_total",
+		Help: "Bot requests, by Bot name (from the crawler list, or unknown), status class and kind of page.",
+	}, []string{labelBot, labelStatusClass, labelKind})
+	s.registry.MustRegister(s.pageViews, s.botRequests, s.others)
 	return s
 }
 
@@ -110,6 +125,7 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 func (s *Stats) record(r *http.Request, status int) {
 	kind := kindOf(r.URL.Path, status)
 	if bot, ok := s.bot(r.UserAgent()); ok {
+		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
 		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
 		return
 	}
@@ -130,6 +146,12 @@ func (s *Stats) bot(userAgent string) (string, bool) {
 		return botUnknown, true
 	}
 	return "", false
+}
+
+// statusClass is the class of status, such as "2xx" for 200.
+func statusClass(status int) string {
+	const perClass = 100
+	return strconv.Itoa(status/perClass) + "xx"
 }
 
 // emit writes l as one JSON line.

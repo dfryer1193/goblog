@@ -74,3 +74,42 @@ func TestBotsRequestsEmitABotLineAndNoPageView(t *testing.T) {
 		})
 	}
 }
+
+func TestMetricsCountBotRequestsByBotStatusClassAndKindOfPage(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	googlebot := http.Header{"User-Agent": {"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"}}
+	curl := http.Header{"User-Agent": {"curl/8.5.0"}}
+
+	for _, req := range []struct {
+		path   string
+		header http.Header
+	}{
+		{"/posts/hello/", googlebot},
+		{"/posts/hello/", googlebot},
+		{"/images/cat.png", googlebot},
+		{"/posts/hello", googlebot},
+		{"/wp-login.php", curl},
+		{"/wp-login.php", http.Header{"User-Agent": {""}}},
+		{"/feed.xml", curl},
+	} {
+		g.request(t, http.MethodGet, req.path, req.header)
+	}
+
+	for sample, want := range map[string]float64{
+		`goblog_bot_requests_total{bot="Googlebot",kind="post",status_class="2xx"}`:  2,
+		`goblog_bot_requests_total{bot="Googlebot",kind="image",status_class="2xx"}`: 1,
+		`goblog_bot_requests_total{bot="Googlebot",kind="other",status_class="3xx"}`: 1,
+		`goblog_bot_requests_total{bot="unknown",kind="missing",status_class="4xx"}`: 2,
+		`goblog_bot_requests_total{bot="unknown",kind="feed",status_class="2xx"}`:    1,
+		`goblog_page_views_total{kind="post"}`:                                       0,
+		`goblog_other_requests_total{kind="image"}`:                                  0,
+		`goblog_other_requests_total{kind="missing"}`:                                0,
+		`goblog_other_requests_total{kind="feed"}`:                                   0,
+	} {
+		if got := g.metric(t, sample); got != want {
+			t.Errorf("%s = %v, want %v", sample, got, want)
+		}
+	}
+}
