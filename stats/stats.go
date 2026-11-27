@@ -5,6 +5,8 @@
 // Statistics section, which documents the lines and metrics as a contract.
 package stats
 
+//go:generate go tool mimir-generate
+
 import (
 	"encoding/json"
 	"fmt"
