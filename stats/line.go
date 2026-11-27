@@ -27,4 +27,7 @@ type line struct {
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
 	Kind string `json:"kind"`
+	// VisitorID tells Visitors apart for the day; see visitorIDFor. It's
+	// omitted without a salt.
+	VisitorID string `json:"visitor_id,omitempty"`
 }

@@ -227,6 +227,9 @@ type goblog struct {
 	statsConfig *fakeStatsConfig
 	// metrics serves goblog's metrics handler, as its metrics port does.
 	metrics *httptest.Server
+	// saltFile is the salt file's path (GOBLOG_STATS_SALT_FILE), which
+	// startGoblog writes testSalt to.
+	saltFile string
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
@@ -244,10 +247,13 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]string, output io.Writer) *goblog {
 	t.Helper()
 	workDir := t.TempDir()
+	saltFile := filepath.Join(t.TempDir(), "salt")
+	writeFile(t, saltFile, testSalt)
 	vars := map[string]string{
-		"GOBLOG_CONTENT_URL":    repo.url(),
-		"GOBLOG_WORK_DIR":       workDir,
-		"GOBLOG_WEBHOOK_SECRET": webhookSecret,
+		"GOBLOG_CONTENT_URL":     repo.url(),
+		"GOBLOG_WORK_DIR":        workDir,
+		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
+		"GOBLOG_STATS_SALT_FILE": saltFile,
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -283,6 +289,18 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		stats:       captured,
 		statsConfig: statsConfig,
 		metrics:     metrics,
+		saltFile:    cfg.StatsSaltFile,
+	}
+}
+
+// testSalt is the salt startGoblog writes to the salt file: 32 bytes.
+const testSalt = "test-salt-0123456789abcdefghijkl"
+
+// writeFile writes content to path, replacing it.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }
 

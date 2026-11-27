@@ -36,6 +36,9 @@ type Config struct {
 	Now func() time.Time
 	// Output receives the JSON lines. Nil means os.Stdout.
 	Output io.Writer
+	// SaltFile is the path of the daily salt for Visitor IDs. Empty means
+	// there's no salt, and so no Visitor IDs.
+	SaltFile string
 }
 
 // Stats is Site Statistics, built by New.
@@ -43,6 +46,7 @@ type Stats struct {
 	settings Settings
 	now      func() time.Time
 	lines    *emitter
+	salt     []byte
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
@@ -65,6 +69,9 @@ func New(cfg Config) *Stats {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
+	if cfg.SaltFile != "" {
+		s.salt = readSalt(cfg.SaltFile)
+	}
 	s.registry = prometheus.NewRegistry()
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
@@ -107,7 +114,11 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
-	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
+	l := line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind}
+	if s.salt != nil {
+		l.VisitorID = visitorIDFor(s.salt, clientIP(r), r.UserAgent())
+	}
+	s.emit(l)
 }
 
 // emit writes l as one JSON line.
