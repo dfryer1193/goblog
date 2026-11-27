@@ -5,6 +5,8 @@
 // Statistics section, which documents the lines and metrics as a contract.
 package stats
 
+//go:generate go tool mimir-generate
+
 import (
 	"encoding/json"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
@@ -21,8 +24,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// labelKind is the metrics' label for the kind of page.
-const labelKind = "kind"
+// The metrics' labels.
+const (
+	// labelKind is the kind of page.
+	labelKind = "kind"
+	// labelBot is the Bot name.
+	labelBot = "bot"
+	// labelReader is the feed reader's name.
+	labelReader = "reader"
+	// labelStatusClass is the class of the response's status, such as 2xx.
+	labelStatusClass = "status_class"
+)
 
 // Settings is the StatsConfig: the settings Site Statistics read on every
 // request, so changes apply live.
@@ -30,6 +42,10 @@ type Settings interface {
 	// Enabled reports whether Site Statistics are on. While they're off,
 	// nothing is emitted.
 	Enabled() bool
+	// ExcludedNetworks are CIDRs, such as the author's own networks, whose
+	// requests emit nothing at all. Entries that aren't CIDRs are skipped,
+	// with a warning.
+	ExcludedNetworks() []string
 }
 
 // Config is what Site Statistics are built from.
@@ -62,6 +78,7 @@ type Config struct {
 // Stats is Site Statistics, built by New.
 type Stats struct {
 	settings Settings
+	excluded *excludedNetworks
 	now      func() time.Time
 	siteURL  func() string
 	sources  sourceList
@@ -71,9 +88,23 @@ type Stats struct {
 	city *database
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
-	registry   *prometheus.Registry
+	// crawlers recognises Bots by the crawler list.
+	crawlers *crawlers
+	// readers recognises feed readers.
+	readers  *feedReaders
+	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
+	// botRequests counts Bot requests by Bot name, status class and kind
+	// of page.
+	botRequests *prometheus.CounterVec
+	// feedFetches counts feed fetches by feed reader.
+	feedFetches *prometheus.CounterVec
+	// feedSubscribers is the latest subscriber count each feed reader
+	// reported.
+	feedSubscribers *prometheus.GaugeVec
+	// visitorNotFound counts Visitor 404s.
+	visitorNotFound prometheus.Counter
 	// others counts the requests that are none of the other classes, by
 	// kind of page.
 	others *prometheus.CounterVec
@@ -96,6 +127,12 @@ func New(cfg Config) (*Stats, error) {
 	if output == nil {
 		output = os.Stdout
 	}
+	crawlers, err := parsedCrawlers()
+	if err != nil {
+		return nil, fmt.Errorf("loading the crawler list: %w", err)
+	}
+	s.crawlers = crawlers
+	s.readers = newFeedReaders(crawlers)
 	s.lines = newEmitter(output)
 	// Built here, in serve mode only: it takes a few milliseconds and MiB.
 	s.userAgents = useragent.NewParser()
@@ -108,16 +145,34 @@ func New(cfg Config) (*Stats, error) {
 		Name: "goblog_stats_salt_loaded",
 		Help: "Whether a salt for Visitor IDs is loaded: 1 if so, 0 if Page Views have no Visitor ID.",
 	})
+	s.excluded = newExcludedNetworks(logger)
 	s.salt = newSalt(cfg.SaltFile, s.now, logger, saltLoaded)
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
 		Help: "Page Views, by kind of page.",
 	}, []string{labelKind})
+	s.visitorNotFound = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "goblog_visitor_not_found_total",
+		Help: "Visitor 404s: Visitors' GETs, not prefetches, answered with the 404 page.",
+	})
 	s.others = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_other_requests_total",
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
-	s.registry.MustRegister(s.pageViews, s.others, saltLoaded)
+	s.botRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_bot_requests_total",
+		Help: "Bot requests, by Bot name (from the crawler list, or unknown), status class and kind of page.",
+	}, []string{labelBot, labelStatusClass, labelKind})
+	s.feedFetches = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_feed_fetches_total",
+		Help: "Feed fetches, by feed reader.",
+	}, []string{labelReader})
+	s.feedSubscribers = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "goblog_feed_subscribers",
+		Help: "The subscriber count each feed reader last reported in its User-Agent.",
+	}, []string{labelReader})
+	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers,
+		s.visitorNotFound, s.others, saltLoaded)
 	if cfg.CityDatabaseURL != "" {
 		s.city = newDatabase(databaseConfig{
 			Name:        cityDatabase,
@@ -159,23 +214,48 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 }
 
 // record emits what Site Statistics learn from a request answered with
-// status.
+// status. Each request is in one class, checked in order: Excluded first,
+// ahead of every other class.
 func (s *Stats) record(r *http.Request, status int) {
 	if s.city != nil {
 		s.city.refresh()
 	}
-	kind := kindOf(r.URL.Path, status)
-	if !isPageView(r, kind, status) {
-		s.others.WithLabelValues(kind).Inc()
+	// Excluded: a request from an excluded network emits nothing at all,
+	// neither a line nor a metric.
+	if s.excluded.contains(s.settings.ExcludedNetworks(), clientIP(r)) {
 		return
 	}
-	s.pageViews.WithLabelValues(kind).Inc()
+	kind := kindOf(r.URL.Path, status)
+	if kind == kindFeed && s.recordFeedFetch(r, status) {
+		return
+	}
+	if bot, ok := s.bot(r.UserAgent()); ok {
+		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
+		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
+		return
+	}
+	switch {
+	case isPageView(r, kind, status):
+		s.pageViews.WithLabelValues(kind).Inc()
+		s.emit(s.visitorLine(r, classPageView, kind, status))
+	case isVisitorNotFound(r, kind):
+		s.visitorNotFound.Inc()
+		s.emit(s.visitorLine(r, classNotFound, kind, status))
+	default:
+		s.others.WithLabelValues(kind).Inc()
+	}
+}
+
+// visitorLine is the line of class for a Visitor's request r, for a page of
+// kind answered with status: it carries the Visitor fields, which Page Views
+// and Visitor 404s share.
+func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) line {
 	ip := clientIP(r)
 	loc := locationOf(s.city, ip)
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
 		Time:         s.now().UTC(),
-		Class:        classPageView,
+		Class:        class,
 		Path:         r.URL.Path,
 		Status:       status,
 		Kind:         kind,
@@ -189,7 +269,7 @@ func (s *Stats) record(r *http.Request, status int) {
 	if key := s.salt.current(); key != nil {
 		l.VisitorID = visitorIDFor(key, ip, r.UserAgent())
 	}
-	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
+	return l.withSource(s.sources.sourceOf(r, s.siteHost()))
 }
 
 // siteHost is the current site's host, from its url, or "" if it has none.
@@ -202,6 +282,41 @@ func (s *Stats) siteHost() string {
 		return ""
 	}
 	return hostOf(u.Host)
+}
+
+// recordFeedFetch emits r, a request for the feed answered with status, as
+// a feed fetch if a known feed reader sent it, and reports whether it did.
+func (s *Stats) recordFeedFetch(r *http.Request, status int) bool {
+	reader, ok := s.readers.match(r.UserAgent())
+	if !ok {
+		return false
+	}
+	s.feedFetches.WithLabelValues(reader.name).Inc()
+	if reader.subscribers != nil {
+		s.feedSubscribers.WithLabelValues(reader.name).Set(float64(*reader.subscribers))
+	}
+	s.emit(line{
+		Time: s.now().UTC(), Class: classFeedFetch, Path: r.URL.Path, Status: status, Kind: kindFeed,
+		Reader: reader.name, Subscribers: reader.subscribers,
+	})
+	return true
+}
+
+// bot is the Bot name of a request with userAgent, if it's a Bot's.
+func (s *Stats) bot(userAgent string) (string, bool) {
+	if cr, ok := s.crawlers.match(userAgent, false); ok {
+		return cr.name, true
+	}
+	if botByHeuristics(userAgent) {
+		return botUnknown, true
+	}
+	return "", false
+}
+
+// statusClass is the class of status, such as "2xx" for 200.
+func statusClass(status int) string {
+	const perClass = 100
+	return strconv.Itoa(status/perClass) + "xx"
 }
 
 // emit writes l as one JSON line.
@@ -217,7 +332,8 @@ func (s *Stats) emit(l line) {
 // defaults are the StatsConfig's defaults.
 type defaults struct{}
 
-// Defaults are the StatsConfig's defaults: Site Statistics are on.
+// Defaults are the StatsConfig's defaults: Site Statistics are on, and no
+// networks are excluded.
 func Defaults() Settings {
 	return defaults{}
 }
@@ -225,4 +341,9 @@ func Defaults() Settings {
 // Enabled is true by default.
 func (defaults) Enabled() bool {
 	return true
+}
+
+// ExcludedNetworks are empty by default.
+func (defaults) ExcludedNetworks() []string {
+	return nil
 }

@@ -199,6 +199,22 @@ func (o *statsOutput) lines() []string {
 type fakeStatsConfig struct {
 	mu       sync.Mutex
 	disabled bool
+	excluded []string
+}
+
+// ExcludedNetworks are the CIDRs whose requests emit nothing. There are
+// none by default.
+func (c *fakeStatsConfig) ExcludedNetworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.excluded
+}
+
+// setExcludedNetworks replaces the excluded networks with cidrs.
+func (c *fakeStatsConfig) setExcludedNetworks(cidrs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.excluded = cidrs
 }
 
 // Enabled reports whether Site Statistics are on. They are by default.
@@ -349,7 +365,7 @@ func writeFile(t *testing.T, path, content string) {
 // or 0 if there's no such sample.
 func (g *goblog) metric(t *testing.T, sample string) float64 {
 	t.Helper()
-	for line := range strings.Lines(g.metricsText(t)) {
+	for line := range strings.Lines(g.metricsBody(t)) {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
 			f, parseErr := strconv.ParseFloat(value, 64)
 			if parseErr != nil {
@@ -361,8 +377,9 @@ func (g *goblog) metric(t *testing.T, sample string) float64 {
 	return 0
 }
 
-// metricsText scrapes goblog's metrics handler at /metrics.
-func (g *goblog) metricsText(t *testing.T) string {
+// metricsBody scrapes goblog's metrics handler at /metrics and returns what
+// it serves.
+func (g *goblog) metricsBody(t *testing.T) string {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.metrics.URL+"/metrics", http.NoBody)
 	if err != nil {
@@ -381,6 +398,32 @@ func (g *goblog) metricsText(t *testing.T) string {
 		t.Fatalf("GET /metrics status = %d; body:\n%s", resp.StatusCode, body)
 	}
 	return string(body)
+}
+
+// assertMetrics fails the test unless each of want's samples has its value
+// within 5 seconds. Site Statistics count a request after its response is
+// written, so a scrape right after a response may not count it yet.
+func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		wrong := map[string]float64{}
+		for sample, value := range want {
+			if got := g.metric(t, sample); got != value {
+				wrong[sample] = got
+			}
+		}
+		if len(wrong) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for sample, got := range wrong {
+				t.Errorf("%s = %v, want %v", sample, got, want[sample])
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // statsLines waits for goblog to have written n Site Statistics lines, and
@@ -450,15 +493,21 @@ func (g *goblog) get(t *testing.T, path string) response {
 	return g.request(t, http.MethodGet, path, nil)
 }
 
+// browserUserAgent is the User-Agent requests send unless they set their
+// own, so that they're a Visitor's, not a Bot's.
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+
 // request sends a method request for path to goblog with header added.
 // Redirects aren't followed, and the body isn't decompressed: no
-// Accept-Encoding is sent unless header has one.
+// Accept-Encoding is sent unless header has one. The User-Agent is a
+// browser's unless header has one; an empty one sends none.
 func (g *goblog) request(t *testing.T, method, path string, header http.Header) response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, g.srv.URL+path, http.NoBody)
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}
+	req.Header.Set("User-Agent", browserUserAgent)
 	maps.Copy(req.Header, header)
 	transport, ok := g.srv.Client().Transport.(*http.Transport)
 	if !ok {

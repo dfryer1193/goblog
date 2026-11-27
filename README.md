@@ -218,6 +218,9 @@ goblog ships no manifests, so here is everything a deployment needs:
 - **Salt:** a Secret holding the daily salt, mounted read-only and named by
   `GOBLOG_STATS_SALT_FILE`, replaced every day at 00:00 UTC by a scheduled
   job. See [the salt file](#the-salt-file).
+- **Mimir:** `MIMIR_ENVIRONMENT` and read-only object storage credentials,
+  so the [StatsConfig](#settings) can change live. Without them, goblog
+  runs on its defaults.
 - **Webhook:** the Content Repository's push webhook goes to `/webhook` on
   the site's public hostname.
 - **Replicas:** each replica clones, polls and renders on its own, with no
@@ -258,14 +261,42 @@ goblog counts how its site is read without cookies, JavaScript or a
 database (see [ADR-0002](docs/adr/0002-site-statistics-without-a-database.md)
 and the glossary's Site Statistics terms). It classifies each request for
 the site's files and emits what it learns two ways: a JSON line on stdout
-for each Page View, and Prometheus metrics. The probes and the webhook
-aren't counted. Emitting never changes or delays a response: if stdout
+for each Page View, Visitor 404, Bot request and feed fetch, and Prometheus
+metrics. The
+probes and the webhook aren't counted. Emitting never changes or delays a response: if stdout
 can't keep up, lines are dropped.
 
 A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
 Post, a Page, the index or a tag page), answered with 200 or 304. Images,
 assets, the feed, the sitemap, redirects and 404s are never Page Views.
+
+A **Visitor 404** is a Visitor's request answered with the 404 page, under
+the same rules as a Page View: a `GET` (not `HEAD`, which link checkers
+send) that isn't a prefetch. It's never a Page View. Its line carries the
+same Visitor fields as a Page View's (the Visitor ID, the Source, `entry`,
+the browser, operating system and device), so it says which missing paths
+Visitors hit and which Sources sent them. A Bot's 404 is a Bot request of
+kind `missing`, never a Visitor 404.
+
+A **Bot request** is one whose `User-Agent` matches the
+[crawler list](stats/bots/README.md), is empty, or is an HTTP library's or
+command-line tool's (such as curl, python-requests or Go-http-client). A
+Bot request is never a Page View. Its Bot name is the list entry's (such as
+`Googlebot`, `bingbot` or `GPTBot`), or `unknown` for an empty `User-Agent`
+or an HTTP library's. The crawler list is
+[monperrus/crawler-user-agents](https://github.com/monperrus/crawler-user-agents)
+(MIT), embedded in goblog. [`stats/bots/README.md`](stats/bots/README.md)
+records its version and says how to update it.
+
+A **feed fetch** is a known feed reader's request for the feed, `/feed.xml`.
+The feed readers are the crawler list's (such as Inoreader, Feedly, Feedbin
+and NewsBlur) plus NetNewsWire. A feed reader's request is checked before
+the Bot rules, so it's a feed fetch even though the list has it: anywhere
+but the feed, it's a Bot request. When its `User-Agent` reports a
+subscriber count (`N subscribers`, as Inoreader, Feedbin and NewsBlur
+document), the feed fetch carries it. The counts are approximate: Feedly,
+for one, may fetch the same feed under more than one feed ID.
 
 Each request has a **kind of page**, from its path: `post`, `page`, `index`,
 `tag` (the tags page or a tag's page), `image`, `asset` (the stylesheet,
@@ -274,15 +305,15 @@ fonts and licences), `feed`, `sitemap`, `missing` (anything answered with
 
 ### The JSON lines
 
-Each Page View writes one JSON object on its own line to stdout, among
-goblog's ordinary logs. These field names are a contract: later versions
-only add fields.
+Each Page View, Visitor 404, Bot request and feed fetch writes one JSON
+object on its own line to stdout, among goblog's ordinary logs. These field names are a
+contract: later versions only add fields.
 
 | Field    | Meaning                                                           |
 | -------- | ----------------------------------------------------------------- |
 | `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
 | `time`   | When the request was answered: RFC 3339, in UTC                   |
-| `class`  | The class of request: `page_view`                                 |
+| `class`  | The class of request: `page_view`, `not_found` (a Visitor 404), `bot` or `feed_fetch` |
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
@@ -297,13 +328,19 @@ only add fields.
 | `campaign_name` | A Campaign's `utm_campaign`, if it has one |
 | `entry`  | Whether the Visitor arrived from outside the site: `false` only when the referrer is the site itself |
 | `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
-| `country` | The Visitor's country, as an ISO 3166-1 alpha-2 code such as `US`. Omitted without the [location database](#location), or if it doesn't know the client IP |
+| `country` | The Visitor's country, as an ISO 3166-1 alpha-2 code such as `US`. Page Views and Visitor 404s only. Omitted without the [location database](#location), or if it doesn't know the client IP |
 | `region` | The Visitor's state or province, as its English name such as `New York`. Omitted as `country` is, or if the database has only the country |
+| `bot`    | A Bot request's Bot name, or `unknown`                            |
+| `reader` | A feed fetch's feed reader, such as `Inoreader`                   |
+| `subscribers` | A feed fetch's reported subscriber count; absent if the reader reports none |
 
 For example:
 
 ```json
 {"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"Hacker News","source_kind":"social","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"lobste.rs","source_kind":"site","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
 
 The browser, operating system and device come from the User-Agent, parsed
@@ -372,7 +409,7 @@ or stores a salt of its own. Whatever writes it must follow this contract:
   disagree briefly around 00:00 UTC.)
 
 If the variable isn't set, or the file is missing, empty, shorter than 32
-bytes or unreadable, Page View lines leave out `visitor_id` and everything
+bytes or unreadable, Page View and Visitor 404 lines leave out `visitor_id` and everything
 else is emitted as usual. goblog logs a warning when the salt becomes
 unusable (not on every request), `goblog_stats_salt_loaded` reads 0, and
 Visitor IDs come back once the file is usable again.
@@ -381,7 +418,7 @@ Visitor IDs come back once the file is usable again.
 
 IP geolocation by [DB-IP](https://db-ip.com).
 
-The `country` and `region` come from the client IP, looked up in
+A Page View's or Visitor 404's `country` and `region` come from the client IP, looked up in
 [DB-IP's IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite)
 database, licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Nothing finer
@@ -404,7 +441,7 @@ on the disk or the network.
   new copy in without a restart. It keeps the copy in use until the new
   one has loaded and been checked, then deletes the old one.
 - **Failures:** if the download fails, goblog keeps serving, logs a
-  warning, and keeps using the copy it has. Without one, Page Views go
+  warning, and keeps using the copy it has. Without one, lines go
   without `country` and `region`, and `goblog_stats_database_loaded` reads
   0.
 - **Disk:** the work directory holds the copy in use and, while a new
@@ -418,21 +455,54 @@ site's port:
 | Metric                        | Type    | Labels | Counts                                                 |
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
-| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as images, assets, the feed, redirects and 404s |
+| `goblog_visitor_not_found_total` | counter | none | Visitor 404s                                      |
+| `goblog_bot_requests_total`   | counter | `bot`, `status_class` (`2xx`, `3xx`, `4xx` or `5xx`), `kind` | Bot requests |
+| `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
+| `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
+| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
 | `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
 | `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city`) is loaded, 0 while lines go without its data |
 | `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |
 
+Bot and feed reader names come from the crawler list, so their label sets
+are bounded.
+
 ### Settings
 
 Site Statistics read their settings, the `StatsConfig`, on every request, so
-a change applies at once. For now goblog always uses the defaults:
+a change applies at once, with no restart or redeploy. The `StatsConfig` is a
+[Mimir](https://github.com/worldtree-industries/mimir) Config,
+`github.com/dfryer1193/goblog/stats.StatsConfig` (shown as "Site
+Statistics"), defined in [`stats/stats_config.json`](stats/stats_config.json).
+Change its Items with Mimir Overrides for Deployable `goblog`:
 
-| Setting   | Meaning                                                          | Default |
-| --------- | ---------------------------------------------------------------- | ------- |
-| `enabled` | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
+| Item                | Type         | Meaning | Default |
+| ------------------- | ------------ | ------- | ------- |
+| `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP before anything else, so even a Bot or feed reader there emits nothing. An entry that isn't a CIDR is skipped with a warning naming it (once, not on every request), and the rest still apply | empty |
+| `enabled`           | `bool`       | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
 
-`goblog build` doesn't count anything.
+Keep your networks in Mimir, not in the Content Repository, so they're never
+published.
+
+Only serve mode starts Mimir's client; `goblog build` never does, and doesn't
+count anything. The client needs this environment (see Mimir's README for
+the rest, such as `MIMIR_POLL_INTERVAL`):
+
+| Variable | Meaning |
+| -------- | ------- |
+| `MIMIR_ENVIRONMENT` | The Environment: `dev`, `staging` or `prod`. Required for anything but the defaults |
+| `MIMIR_DEPLOYABLE` | The Deployable. Leave it unset: it defaults to `goblog`, from the binary's main package |
+| `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | The object storage Mimir publishes Snapshots to, read from bucket `mimir-<environment>`. goblog needs read-only access |
+| `MIMIR_SERVER_URL` | mimir-server, which goblog registers its Config with. Default: `http://mimir-server.mimir-config` |
+
+Without `MIMIR_ENVIRONMENT` or object storage, goblog logs why and runs on
+the defaults. If object storage doesn't answer, it keeps its last values (the
+defaults, at a cold start) and picks the real ones up at a later poll. On a
+cold start the client waits up to 5 seconds for its first read, in the
+background: goblog serves straight away, on the defaults until then.
+
+After changing `stats/stats_config.json`, regenerate its Go code with
+`go generate ./stats`.
 
 ## Development
 

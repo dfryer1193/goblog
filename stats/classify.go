@@ -73,6 +73,13 @@ func isPageView(r *http.Request, kind string, status int) bool {
 		(status == http.StatusOK || status == http.StatusNotModified)
 }
 
+// isVisitorNotFound reports whether r, a Visitor's request for a page of
+// kind, is a Visitor 404: a GET that isn't a prefetch, answered with the
+// 404 page. Like a Page View, a HEAD isn't one.
+func isVisitorNotFound(r *http.Request, kind string) bool {
+	return r.Method == http.MethodGet && !isPrefetch(r) && kind == kindMissing
+}
+
 // isPrefetch reports whether r is a browser's prefetch (or prerender), as
 // its Sec-Purpose or Purpose header says.
 func isPrefetch(r *http.Request) bool {
