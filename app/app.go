@@ -115,7 +115,8 @@ type Config struct {
 	// environment; tests set it.
 	Now func() time.Time
 	// StatsConfig is Site Statistics' settings. Nil means the defaults. It
-	// isn't read from the environment; tests set it.
+	// isn't read from the environment: main sets it to the StatsConfig from
+	// Mimir, and tests to their own.
 	StatsConfig stats.Settings
 	// StatsOutput receives the Site Statistics JSON lines. Nil means
 	// stdout. It isn't read from the environment; tests set it.

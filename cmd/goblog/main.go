@@ -19,6 +19,7 @@ import (
 	"github.com/dfryer1193/mjolnir/utils/log"
 
 	"github.com/dfryer1193/goblog/app"
+	"github.com/dfryer1193/goblog/stats"
 )
 
 // drainBudget is the whole shutdown budget: half with readiness at 503, half
@@ -52,6 +53,10 @@ func serve() {
 		lg.Error("Invalid configuration", "error", err)
 		os.Exit(1)
 	}
+	// The StatsConfig comes from Mimir, live, in serve mode only. Its client
+	// runs for the life of the process, and until it has read its first
+	// values (up to 5 seconds), the defaults apply.
+	cfg.StatsConfig = stats.StartMimirSettings(context.Background(), log.GetLogger("mimir"))
 	a, err := app.New(cfg)
 	if err != nil {
 		lg.Error("Failed to start", "error", err)
