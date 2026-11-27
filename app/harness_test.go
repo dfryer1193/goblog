@@ -453,15 +453,21 @@ func (g *goblog) get(t *testing.T, path string) response {
 	return g.request(t, http.MethodGet, path, nil)
 }
 
+// browserUserAgent is the User-Agent requests send unless they set their
+// own, so that they're a Visitor's, not a Bot's.
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+
 // request sends a method request for path to goblog with header added.
 // Redirects aren't followed, and the body isn't decompressed: no
-// Accept-Encoding is sent unless header has one.
+// Accept-Encoding is sent unless header has one. The User-Agent is a
+// browser's unless header has one; an empty one sends none.
 func (g *goblog) request(t *testing.T, method, path string, header http.Header) response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, g.srv.URL+path, http.NoBody)
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}
+	req.Header.Set("User-Agent", browserUserAgent)
 	maps.Copy(req.Header, header)
 	transport, ok := g.srv.Client().Transport.(*http.Transport)
 	if !ok {
