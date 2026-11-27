@@ -96,6 +96,7 @@ The server is configured from the environment:
 | `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
 | `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
+| `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
@@ -209,6 +210,9 @@ goblog ships no manifests, so here is everything a deployment needs:
 - **Port and probes:** HTTP on `PORT` (default `8080`). Point liveness at
   `/livez`, readiness at `/readyz` (not ready until the first render is
   served) and, if you use one, the startup probe at `/startupz`.
+- **Metrics:** Prometheus metrics at `/metrics` on `GOBLOG_METRICS_PORT`
+  (default `9090`), apart from the site. Keep that port off the public
+  route, and point your scraper at it.
 - **Webhook:** the Content Repository's push webhook goes to `/webhook` on
   the site's public hostname.
 - **Replicas:** each replica clones, polls and renders on its own, with no
@@ -243,6 +247,67 @@ Drafts, marked as such. Posts that can't be rendered, such as one with no
 the command then exits with status 1. Warnings, about things the build worked
 around, are reported too, but on their own the command still succeeds.
 
+## Site Statistics
+
+goblog counts how its site is read without cookies, JavaScript or a
+database (see [ADR-0002](docs/adr/0002-site-statistics-without-a-database.md)
+and the glossary's Site Statistics terms). It classifies each request for
+the site's files and emits what it learns two ways: a JSON line on stdout
+for each Page View, and Prometheus metrics. The probes and the webhook
+aren't counted. Emitting never changes or delays a response: if stdout
+can't keep up, lines are dropped.
+
+A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
+`Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
+Post, a Page, the index or a tag page), answered with 200 or 304. Images,
+assets, the feed, the sitemap, redirects and 404s are never Page Views.
+
+Each request has a **kind of page**, from its path: `post`, `page`, `index`,
+`tag` (the tags page or a tag's page), `image`, `asset` (the stylesheet,
+fonts and licences), `feed`, `sitemap`, `missing` (anything answered with
+404) or `other` (such as a redirect).
+
+### The JSON lines
+
+Each Page View writes one JSON object on its own line to stdout, among
+goblog's ordinary logs. These field names are a contract: later versions
+only add fields.
+
+| Field    | Meaning                                                           |
+| -------- | ----------------------------------------------------------------- |
+| `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
+| `time`   | When the request was answered: RFC 3339, in UTC                   |
+| `class`  | The class of request: `page_view`                                 |
+| `path`   | The request's path, without its query string                      |
+| `status` | The response's status code                                        |
+| `kind`   | The kind of page                                                  |
+
+For example:
+
+```json
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post"}
+```
+
+### The metrics
+
+Served at `/metrics` on `GOBLOG_METRICS_PORT` (default `9090`), never on the
+site's port:
+
+| Metric                        | Type    | Labels | Counts                                                 |
+| ----------------------------- | ------- | ------ | ------------------------------------------------------ |
+| `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
+| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as images, assets, the feed, redirects and 404s |
+
+### Settings
+
+Site Statistics read their settings, the `StatsConfig`, on every request, so
+a change applies at once. For now goblog always uses the defaults:
+
+| Setting   | Meaning                                                          | Default |
+| --------- | ---------------------------------------------------------------- | ------- |
+| `enabled` | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
+
+`goblog build` doesn't count anything.
 
 ## Development
 
