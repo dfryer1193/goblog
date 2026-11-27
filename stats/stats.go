@@ -7,13 +7,16 @@ package stats
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
+	useragent "github.com/medama-io/go-useragent"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -42,15 +45,24 @@ type Config struct {
 	SaltFile string
 	// Logger receives Site Statistics' warnings. Nil means slog's default.
 	Logger *slog.Logger
+	// SiteURL is the current site's base URL, from site.yaml's url, or ""
+	// if it has none. A referrer from its host is internal navigation.
+	// Without a url, or with a nil SiteURL, the host a request was sent to
+	// is the site's host.
+	SiteURL func() string
 }
 
 // Stats is Site Statistics, built by New.
 type Stats struct {
 	settings Settings
 	now      func() time.Time
+	siteURL  func() string
+	sources  sourceList
 	lines    *emitter
 	salt     *salt
-	registry *prometheus.Registry
+	// userAgents parses User-Agents into families.
+	userAgents *useragent.Parser
+	registry   *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
 	// others counts the requests that are none of the other classes, by
@@ -59,8 +71,12 @@ type Stats struct {
 }
 
 // New builds Site Statistics from cfg.
-func New(cfg Config) *Stats {
-	s := &Stats{settings: cfg.Settings, now: cfg.Now}
+func New(cfg Config) (*Stats, error) {
+	sources, err := loadSourceList()
+	if err != nil {
+		return nil, fmt.Errorf("loading the search-engine and social list: %w", err)
+	}
+	s := &Stats{settings: cfg.Settings, now: cfg.Now, siteURL: cfg.SiteURL, sources: sources}
 	if s.settings == nil {
 		s.settings = Defaults()
 	}
@@ -72,6 +88,8 @@ func New(cfg Config) *Stats {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
+	// Built here, in serve mode only: it takes a few milliseconds and MiB.
+	s.userAgents = useragent.NewParser()
 	s.registry = prometheus.NewRegistry()
 	logger := cfg.Logger
 	if logger == nil {
@@ -91,7 +109,7 @@ func New(cfg Config) *Stats {
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
 	s.registry.MustRegister(s.pageViews, s.others, saltLoaded)
-	return s
+	return s, nil
 }
 
 // MetricsHandler serves Site Statistics' Prometheus metrics. It belongs on
@@ -123,11 +141,34 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
-	l := line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind}
+	f := familiesOf(s.userAgents, r.UserAgent())
+	l := line{
+		Time:         s.now().UTC(),
+		Class:        classPageView,
+		Path:         r.URL.Path,
+		Status:       status,
+		Kind:         kind,
+		Browser:      f.browser,
+		BrowserMajor: f.browserMajor,
+		OS:           f.os,
+		Device:       f.device,
+	}
 	if key := s.salt.current(); key != nil {
 		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
 	}
-	s.emit(l)
+	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
+}
+
+// siteHost is the current site's host, from its url, or "" if it has none.
+func (s *Stats) siteHost() string {
+	if s.siteURL == nil {
+		return ""
+	}
+	u, err := url.Parse(s.siteURL())
+	if err != nil {
+		return ""
+	}
+	return hostOf(u.Host)
 }
 
 // emit writes l as one JSON line.

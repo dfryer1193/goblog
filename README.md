@@ -285,13 +285,55 @@ only add fields.
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
+| `browser`       | The browser's family, from the User-Agent, such as `Firefox`, `Chrome`, `Safari` or `Edge`; `other` if it isn't recognised |
+| `browser_major` | The browser's major version, such as `145`. Omitted if it isn't known |
+| `os`            | The operating system's family: `Windows`, `macOS`, `Linux`, `ChromeOS`, `iOS`, `Android`, `FreeBSD` or `OpenBSD`; `other` if it isn't recognised |
+| `device`        | The device type: `desktop`, `mobile`, `tablet` or `tv`; `unknown` if it isn't recognised |
+| `source` | The Source's name, such as `Google`, `Hacker News`, `example.co.uk` or a Campaign's source. Absent for `direct` and `internal` |
+| `source_kind` | The kind of Source: `search`, `social`, `site`, `campaign`, `direct` or `internal` |
+| `campaign_source` | A Campaign's `utm_source` or `ref`. Absent unless `source_kind` is `campaign` |
+| `campaign_medium` | A Campaign's `utm_medium`, if it has one |
+| `campaign_name` | A Campaign's `utm_campaign`, if it has one |
+| `entry`  | Whether the Visitor arrived from outside the site: `false` only when the referrer is the site itself |
 | `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
 
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
 ```
+
+The browser, operating system and device come from the User-Agent, parsed
+with [medama-io/go-useragent](https://github.com/medama-io/go-useragent)
+(MIT). The browser families are that parser's fixed set (such as `Opera`,
+`Vivaldi`, `Samsung Browser` and `Firefox`), so there are only ever a few
+values. A line never carries the raw User-Agent, or any version finer than
+the browser's major one. Safari on an iPad sends the same User-Agent as Safari
+on a Mac by default, so it counts as `macOS` and `desktop`.
+
+### Sources and Campaigns
+
+The Source comes from the `Referer` header's host. Browsers mostly send
+only the origin to other sites, and a full URL is treated the same way.
+
+- **`search` and `social`:** the host is on
+  [Matomo's search-engine and social list](https://github.com/matomo-org/searchengine-and-social-list),
+  vendored in [`stats/sources`](stats/sources/ORIGIN.md) with its origin,
+  licence (CC0) and how to update it. Its AI assistants count as `search`.
+  The list's name is the Source, so `news.ycombinator.com` is `Hacker News`.
+- **`site`:** any other host, grouped by its registrable domain, so
+  `foo.example.co.uk` is `example.co.uk`. An IP address, or an app's package
+  name (from an `android-app://` referrer), is named as it is.
+- **`internal`:** the host is the site's own, from `site.yaml`'s `url`,
+  with or without `www.`. Without a `url`, the host the request was sent to
+  is the site's. This is navigation within the site, not a Source, and it
+  isn't an `entry`.
+- **`direct`:** no referrer (or an unreadable one), and no Campaign.
+- **`campaign`:** the page's URL is tagged with `utm_source` (with optional
+  `utm_medium` and `utm_campaign`), or else with `ref`. A Campaign takes
+  precedence over the referrer, but a tagged link within the site still
+  isn't an `entry`. Its values are trimmed, lower-cased and cut to 64
+  characters, as are `site` names.
 
 ### Visitor IDs
 

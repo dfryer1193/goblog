@@ -198,13 +198,17 @@ func New(cfg Config) (*App, error) {
 	if cfg.StatsLog != nil {
 		statsLogger = log.GetLoggerTo("stats", cfg.StatsLog)
 	}
-	siteStats := stats.New(stats.Config{
-		Logger:   statsLogger,
+	siteStats, err := stats.New(stats.Config{
 		Settings: cfg.StatsConfig,
 		Now:      cfg.Now,
 		Output:   cfg.StatsOutput,
+		SiteURL:  publisher.SiteURL,
 		SaltFile: cfg.StatsSaltFile,
+		Logger:   statsLogger,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
+	}
 	metrics := http.NewServeMux()
 	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
 	a.metrics = metrics
