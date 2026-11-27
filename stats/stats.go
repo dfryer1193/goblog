@@ -43,6 +43,7 @@ type Stats struct {
 	settings Settings
 	now      func() time.Time
 	lines    *emitter
+	crawlers *crawlers
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
@@ -64,6 +65,12 @@ func New(cfg Config) *Stats {
 	if output == nil {
 		output = os.Stdout
 	}
+	crawlers, err := parsedCrawlers()
+	if err != nil {
+		// The list is embedded, so this is goblog's bug, caught by any test.
+		panic(err)
+	}
+	s.crawlers = crawlers
 	s.lines = newEmitter(output)
 	s.registry = prometheus.NewRegistry()
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -102,12 +109,27 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // status.
 func (s *Stats) record(r *http.Request, status int) {
 	kind := kindOf(r.URL.Path, status)
+	if bot, ok := s.bot(r.UserAgent()); ok {
+		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
+		return
+	}
 	if !isPageView(r, kind, status) {
 		s.others.WithLabelValues(kind).Inc()
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
 	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
+}
+
+// bot is the Bot name of a request with userAgent, if it's a Bot's.
+func (s *Stats) bot(userAgent string) (string, bool) {
+	if cr, ok := s.crawlers.match(userAgent); ok {
+		return cr.name, true
+	}
+	if botByHeuristics(userAgent) {
+		return botUnknown, true
+	}
+	return "", false
 }
 
 // emit writes l as one JSON line.

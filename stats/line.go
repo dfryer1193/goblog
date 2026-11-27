@@ -10,6 +10,8 @@ const streamMarker = "goblog_stats"
 const (
 	// classPageView is a Page View.
 	classPageView = "page_view"
+	// classBot is a Bot's request.
+	classBot = "bot"
 )
 
 // line is one Site Statistics JSON line. Its field names are a contract
@@ -27,4 +29,6 @@ type line struct {
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
 	Kind string `json:"kind"`
+	// Bot is a Bot request's Bot name, or botUnknown.
+	Bot string `json:"bot,omitempty"`
 }
