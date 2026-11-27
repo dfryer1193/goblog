@@ -7,8 +7,10 @@ package stats
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -36,12 +38,19 @@ type Config struct {
 	Now func() time.Time
 	// Output receives the JSON lines. Nil means os.Stdout.
 	Output io.Writer
+	// SiteURL is the current site's base URL, from site.yaml's url, or ""
+	// if it has none. A referrer from its host is internal navigation.
+	// Without a url, or with a nil SiteURL, the host a request was sent to
+	// is the site's host.
+	SiteURL func() string
 }
 
 // Stats is Site Statistics, built by New.
 type Stats struct {
 	settings Settings
 	now      func() time.Time
+	siteURL  func() string
+	sources  sourceList
 	lines    *emitter
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
@@ -52,8 +61,12 @@ type Stats struct {
 }
 
 // New builds Site Statistics from cfg.
-func New(cfg Config) *Stats {
-	s := &Stats{settings: cfg.Settings, now: cfg.Now}
+func New(cfg Config) (*Stats, error) {
+	sources, err := loadSourceList()
+	if err != nil {
+		return nil, fmt.Errorf("loading the search-engine and social list: %w", err)
+	}
+	s := &Stats{settings: cfg.Settings, now: cfg.Now, siteURL: cfg.SiteURL, sources: sources}
 	if s.settings == nil {
 		s.settings = Defaults()
 	}
@@ -75,7 +88,7 @@ func New(cfg Config) *Stats {
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
 	s.registry.MustRegister(s.pageViews, s.others)
-	return s
+	return s, nil
 }
 
 // MetricsHandler serves Site Statistics' Prometheus metrics. It belongs on
@@ -107,7 +120,20 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
-	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
+	l := line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind}
+	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
+}
+
+// siteHost is the current site's host, from its url, or "" if it has none.
+func (s *Stats) siteHost() string {
+	if s.siteURL == nil {
+		return ""
+	}
+	u, err := url.Parse(s.siteURL())
+	if err != nil {
+		return ""
+	}
+	return hostOf(u.Host)
 }
 
 // emit writes l as one JSON line.

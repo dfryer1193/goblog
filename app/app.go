@@ -182,7 +182,15 @@ func New(cfg Config) (*App, error) {
 		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
-	siteStats := stats.New(stats.Config{Settings: cfg.StatsConfig, Now: cfg.Now, Output: cfg.StatsOutput})
+	siteStats, err := stats.New(stats.Config{
+		Settings: cfg.StatsConfig,
+		Now:      cfg.Now,
+		Output:   cfg.StatsOutput,
+		SiteURL:  publisher.SiteURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
+	}
 	metrics := http.NewServeMux()
 	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
 	a.metrics = metrics

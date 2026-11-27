@@ -27,4 +27,22 @@ type line struct {
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
 	Kind string `json:"kind"`
+	// Source is the Source's name, absent for no Source.
+	Source string `json:"source,omitempty"`
+	// SourceKind is the kind of Source, such as sourceSearch.
+	SourceKind string `json:"source_kind,omitempty"`
+	// CampaignSource, CampaignMedium and CampaignName are a Campaign's
+	// tags, each absent if it isn't tagged.
+	CampaignSource string `json:"campaign_source,omitempty"`
+	CampaignMedium string `json:"campaign_medium,omitempty"`
+	CampaignName   string `json:"campaign_name,omitempty"`
+	// Entry is whether the referrer isn't the site itself.
+	Entry *bool `json:"entry,omitempty"`
+}
+
+// withSource is l saying its Visitor came from src.
+func (l line) withSource(src source) line {
+	l.Source, l.SourceKind, l.Entry = src.Name, src.Kind, &src.Entry
+	l.CampaignSource, l.CampaignMedium, l.CampaignName = src.Campaign.Source, src.Campaign.Medium, src.Campaign.Name
+	return l
 }
