@@ -76,3 +76,45 @@ func TestBotLinesSayTheBotsNetworkAndNeverItsIP(t *testing.T) {
 		}
 	}
 }
+
+// assertHosting fails the test unless line's hosting flag is want, or
+// absent if want is nil.
+func assertHosting(t *testing.T, line map[string]any, want *bool) {
+	t.Helper()
+	got, ok := line["hosting"]
+	switch {
+	case want == nil && ok:
+		t.Errorf("hosting = %v, want it absent; line: %v", got, line)
+	case want != nil && got != *want:
+		t.Errorf("hosting = %v, want %v; line: %v", got, *want, line)
+	}
+}
+
+func TestVisitorLinesSayWhetherTheVisitorIsOnAHostingNetworkButNotWhichNetwork(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	g.waitForASN(t)
+
+	yes, no := true, false
+	for _, tc := range []struct {
+		ip      string
+		hosting *bool
+	}{
+		{"1.0.0.1", &yes},      // AS15169, Google: in the hosting list
+		{"89.160.20.112", &no}, // AS29518, Bredband2: an ISP
+		{"12.81.92.1", &no},    // AS7018, AT&T: an ISP
+		{"81.2.69.142", nil},   // not in the database
+	} {
+		for _, path := range []string{"/about/", "/posts/gone/"} {
+			before := len(g.stats.lines())
+			g.request(t, http.MethodGet, path, http.Header{"X-Forwarded-For": {tc.ip}, "User-Agent": {firefox}})
+			line := g.statsLines(t, before+1)[before]
+			if line["class"] != "page_view" && line["class"] != "not_found" {
+				t.Fatalf("%s from %s: class = %v; line: %v", path, tc.ip, line["class"], line)
+			}
+			assertHosting(t, line, tc.hosting)
+			assertNetwork(t, line, 0, "")
+		}
+	}
+}

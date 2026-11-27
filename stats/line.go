@@ -78,6 +78,11 @@ type line struct {
 	// as "New York". It's omitted as Country is, or if the location
 	// database has a country but no region.
 	Region string `json:"region,omitempty"`
+	// Hosting is whether a Page View's or Visitor 404's network is a
+	// hosting or datacenter network, in the vendored hosting-network list.
+	// It's omitted without the network database, or if it doesn't know the
+	// client IP.
+	Hosting *bool `json:"hosting,omitempty"`
 	// Entry is whether the referrer isn't the site itself.
 	Entry *bool `json:"entry,omitempty"`
 }

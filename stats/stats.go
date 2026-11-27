@@ -92,6 +92,8 @@ type Stats struct {
 	city *database
 	// asn is the ASN database, or nil for no network.
 	asn *database
+	// hosting are the hosting networks' AS numbers.
+	hosting hostingNetworks
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
 	// crawlers recognises Bots by the crawler list.
@@ -138,6 +140,9 @@ func New(cfg Config) (*Stats, error) {
 		return nil, fmt.Errorf("loading the crawler list: %w", err)
 	}
 	s.crawlers = crawlers
+	if s.hosting, err = parsedHostingNetworks(); err != nil {
+		return nil, fmt.Errorf("loading the hosting-network list: %w", err)
+	}
 	s.readers = newFeedReaders(crawlers)
 	s.lines = newEmitter(output)
 	// Built here, in serve mode only: it takes a few milliseconds and MiB.
@@ -276,6 +281,7 @@ func (s *Stats) record(r *http.Request, status int) {
 func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) line {
 	ip := clientIP(r)
 	loc := locationOf(s.city, ip)
+	asNet := networkOf(s.asn, ip)
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
 		Time:         s.now().UTC(),
@@ -289,6 +295,12 @@ func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) lin
 		Device:       f.device,
 		Country:      loc.country,
 		Region:       loc.region,
+	}
+	// The network itself is never on a Visitor's line: only whether it's a
+	// hosting network.
+	if asNet.asn != 0 {
+		hosting := s.hosting.contains(asNet.asn)
+		l.Hosting = &hosting
 	}
 	if key := s.salt.current(); key != nil {
 		l.VisitorID = visitorIDFor(key, ip, r.UserAgent())
