@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // googlebot is Googlebot's User-Agent.
@@ -116,5 +117,60 @@ func TestVisitorLinesSayWhetherTheVisitorIsOnAHostingNetworkButNotWhichNetwork(t
 			assertHosting(t, line, tc.hosting)
 			assertNetwork(t, line, 0, "")
 		}
+	}
+}
+
+func TestWithoutTheASNDatabaseLinesOmitTheNetworkWithAWarning(t *testing.T) {
+	t.Parallel()
+	databases := newASNDatabaseServer(t)
+	databases.releaseEveryMonth(t, geoLite2ASN)
+	databases.setFailing(true)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForCity(t)
+	g.waitForWarnings(t, 1)
+
+	assertNetwork(t, botFromIP(t, g, "1.0.0.1"), 0, "")
+	line := visitFromIP(t, g, "1.0.0.1")
+	assertPageView(t, line, "/about/", "page")
+	assertHosting(t, line, nil)
+	if got := g.metric(t, asnLoaded); got != 0 {
+		t.Errorf("%s = %v, want 0", asnLoaded, got)
+	}
+	if got := g.metric(t, cityLoaded); got != 1 {
+		t.Errorf("%s = %v, want 1: the City database doesn't need the ASN one", cityLoaded, got)
+	}
+	warnings := g.statsWarnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "database=asn") {
+		t.Errorf("got warnings %q, want one about the asn database", warnings)
+	}
+	if strings.Contains(g.metricsBody(t), asnAge) {
+		t.Errorf("without an ASN database, there's an age metric:\n%s", g.metricsBody(t))
+	}
+}
+
+func TestANewMonthsASNReleaseIsUsedWithoutARestart(t *testing.T) {
+	t.Parallel()
+	databases := newASNDatabaseServer(t)
+	databases.release(t, "2026-03", geoLite2ASN)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForASN(t)
+	// From 2026-03-01 to the clock's start, 2026-03-10 15:00.
+	if got, want := g.metric(t, asnAge), (9*day + 15*time.Hour).Seconds(); got != want {
+		t.Errorf("%s = %v, want %v", asnAge, got, want)
+	}
+
+	databases.release(t, "2026-04", geoLite2ASN)
+	g.clock.set(time.Date(2026, time.April, 2, 9, 0, 0, 0, time.UTC))
+	visitFromIP(t, g, "1.0.0.1")
+	g.waitForMetric(t, asnAge, (day + 9*time.Hour).Seconds())
+
+	assertNetwork(t, botFromIP(t, g, "1.0.0.1"), 15169, "Google Inc.")
+	if n := g.copiesOf(t, geoLite2ASN); n != 1 {
+		t.Errorf("with April's release loaded, the work directory has %d ASN databases, want 1", n)
+	}
+	if warnings := g.statsWarnings(); len(warnings) != 0 {
+		t.Errorf("got %d warnings, want none:\n%s", len(warnings), strings.Join(warnings, "\n"))
 	}
 }

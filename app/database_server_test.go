@@ -210,6 +210,9 @@ const cityAge = `goblog_stats_database_age_seconds{database="city"}`
 // asnLoaded is the sample saying whether the ASN database is loaded.
 const asnLoaded = `goblog_stats_database_loaded{database="asn"}`
 
+// asnAge is the sample saying how old the loaded ASN database is.
+const asnAge = `goblog_stats_database_age_seconds{database="asn"}`
+
 // waitForASN waits until goblog has loaded an ASN database.
 func (g *goblog) waitForASN(t *testing.T) {
 	t.Helper()
