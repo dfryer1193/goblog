@@ -10,6 +10,8 @@ const streamMarker = "goblog_stats"
 const (
 	// classPageView is a Page View.
 	classPageView = "page_view"
+	// classNotFound is a Visitor 404.
+	classNotFound = "not_found"
 	// classBot is a Bot's request.
 	classBot = "bot"
 	// classFeedFetch is a known feed reader's request for the feed.
@@ -41,16 +43,17 @@ type line struct {
 	// VisitorID tells Visitors apart for the day; see visitorIDFor. It's
 	// omitted without a salt.
 	VisitorID string `json:"visitor_id,omitempty"`
-	// Browser is a Page View's browser family, such as "Firefox", or
-	// "other".
+	// Browser is a Page View's or Visitor 404's browser family, such as
+	// "Firefox", or "other".
 	Browser string `json:"browser,omitempty"`
-	// BrowserMajor is a Page View's browser's major version, such as
-	// "145". It's omitted when it isn't known.
+	// BrowserMajor is a Page View's or Visitor 404's browser's major
+	// version, such as "145". It's omitted when it isn't known.
 	BrowserMajor string `json:"browser_major,omitempty"`
-	// OS is a Page View's operating system family, such as "macOS", or
-	// "other".
+	// OS is a Page View's or Visitor 404's operating system family, such
+	// as "macOS", or "other".
 	OS string `json:"os,omitempty"`
-	// Device is a Page View's device type, such as "mobile", or "unknown".
+	// Device is a Page View's or Visitor 404's device type, such as
+	// "mobile", or "unknown".
 	Device string `json:"device,omitempty"`
 	// Source is the Source's name, absent for no Source.
 	Source string `json:"source,omitempty"`

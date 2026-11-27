@@ -260,7 +260,8 @@ goblog counts how its site is read without cookies, JavaScript or a
 database (see [ADR-0002](docs/adr/0002-site-statistics-without-a-database.md)
 and the glossary's Site Statistics terms). It classifies each request for
 the site's files and emits what it learns two ways: a JSON line on stdout
-for each Page View, Bot request and feed fetch, and Prometheus metrics. The
+for each Page View, Visitor 404, Bot request and feed fetch, and Prometheus
+metrics. The
 probes and the webhook aren't counted. Emitting never changes or delays a response: if stdout
 can't keep up, lines are dropped.
 
@@ -268,6 +269,14 @@ A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
 Post, a Page, the index or a tag page), answered with 200 or 304. Images,
 assets, the feed, the sitemap, redirects and 404s are never Page Views.
+
+A **Visitor 404** is a Visitor's request answered with the 404 page, under
+the same rules as a Page View: a `GET` (not `HEAD`, which link checkers
+send) that isn't a prefetch. It's never a Page View. Its line carries the
+same Visitor fields as a Page View's (the Visitor ID, the Source, `entry`,
+the browser, operating system and device), so it says which missing paths
+Visitors hit and which Sources sent them. A Bot's 404 is a Bot request of
+kind `missing`, never a Visitor 404.
 
 A **Bot request** is one whose `User-Agent` matches the
 [crawler list](stats/bots/README.md), is empty, or is an HTTP library's or
@@ -295,15 +304,15 @@ fonts and licences), `feed`, `sitemap`, `missing` (anything answered with
 
 ### The JSON lines
 
-Each Page View, Bot request and feed fetch writes one JSON object on its
-own line to stdout, among goblog's ordinary logs. These field names are a
+Each Page View, Visitor 404, Bot request and feed fetch writes one JSON
+object on its own line to stdout, among goblog's ordinary logs. These field names are a
 contract: later versions only add fields.
 
 | Field    | Meaning                                                           |
 | -------- | ----------------------------------------------------------------- |
 | `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
 | `time`   | When the request was answered: RFC 3339, in UTC                   |
-| `class`  | The class of request: `page_view`, `bot` or `feed_fetch`          |
+| `class`  | The class of request: `page_view`, `not_found` (a Visitor 404), `bot` or `feed_fetch` |
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
@@ -326,6 +335,7 @@ For example:
 
 ```json
 {"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"lobste.rs","source_kind":"site","entry":true}
 {"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown"}
 {"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
@@ -396,7 +406,7 @@ or stores a salt of its own. Whatever writes it must follow this contract:
   disagree briefly around 00:00 UTC.)
 
 If the variable isn't set, or the file is missing, empty, shorter than 32
-bytes or unreadable, Page View lines leave out `visitor_id` and everything
+bytes or unreadable, Page View and Visitor 404 lines leave out `visitor_id` and everything
 else is emitted as usual. goblog logs a warning when the salt becomes
 unusable (not on every request), `goblog_stats_salt_loaded` reads 0, and
 Visitor IDs come back once the file is usable again.
@@ -409,10 +419,11 @@ site's port:
 | Metric                        | Type    | Labels | Counts                                                 |
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
+| `goblog_visitor_not_found_total` | counter | none | Visitor 404s                                      |
 | `goblog_bot_requests_total`   | counter | `bot`, `status_class` (`2xx`, `3xx`, `4xx` or `5xx`), `kind` | Bot requests |
 | `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
 | `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
-| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects and 404s |
+| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
 | `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
 
 Bot and feed reader names come from the crawler list, so their label sets
