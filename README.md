@@ -253,14 +253,33 @@ goblog counts how its site is read without cookies, JavaScript or a
 database (see [ADR-0002](docs/adr/0002-site-statistics-without-a-database.md)
 and the glossary's Site Statistics terms). It classifies each request for
 the site's files and emits what it learns two ways: a JSON line on stdout
-for each Page View, and Prometheus metrics. The probes and the webhook
-aren't counted. Emitting never changes or delays a response: if stdout
+for each Page View, Bot request and feed fetch, and Prometheus metrics. The
+probes and the webhook aren't counted. Emitting never changes or delays a response: if stdout
 can't keep up, lines are dropped.
 
 A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
 Post, a Page, the index or a tag page), answered with 200 or 304. Images,
 assets, the feed, the sitemap, redirects and 404s are never Page Views.
+
+A **Bot request** is one whose `User-Agent` matches the
+[crawler list](stats/bots/README.md), is empty, or is an HTTP library's or
+command-line tool's (such as curl, python-requests or Go-http-client). A
+Bot request is never a Page View. Its Bot name is the list entry's (such as
+`Googlebot`, `bingbot` or `GPTBot`), or `unknown` for an empty `User-Agent`
+or an HTTP library's. The crawler list is
+[monperrus/crawler-user-agents](https://github.com/monperrus/crawler-user-agents)
+(MIT), embedded in goblog. [`stats/bots/README.md`](stats/bots/README.md)
+records its version and says how to update it.
+
+A **feed fetch** is a known feed reader's request for the feed, `/feed.xml`.
+The feed readers are the crawler list's (such as Inoreader, Feedly, Feedbin
+and NewsBlur) plus NetNewsWire. A feed reader's request is checked before
+the Bot rules, so it's a feed fetch even though the list has it: anywhere
+but the feed, it's a Bot request. When its `User-Agent` reports a
+subscriber count (`N subscribers`, as Inoreader, Feedbin and NewsBlur
+document), the feed fetch carries it. The counts are approximate: Feedly,
+for one, may fetch the same feed under more than one feed ID.
 
 Each request has a **kind of page**, from its path: `post`, `page`, `index`,
 `tag` (the tags page or a tag's page), `image`, `asset` (the stylesheet,
@@ -269,23 +288,28 @@ fonts and licences), `feed`, `sitemap`, `missing` (anything answered with
 
 ### The JSON lines
 
-Each Page View writes one JSON object on its own line to stdout, among
-goblog's ordinary logs. These field names are a contract: later versions
-only add fields.
+Each Page View, Bot request and feed fetch writes one JSON object on its
+own line to stdout, among goblog's ordinary logs. These field names are a
+contract: later versions only add fields.
 
 | Field    | Meaning                                                           |
 | -------- | ----------------------------------------------------------------- |
 | `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
 | `time`   | When the request was answered: RFC 3339, in UTC                   |
-| `class`  | The class of request: `page_view`                                 |
+| `class`  | The class of request: `page_view`, `bot` or `feed_fetch`          |
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
+| `bot`    | A Bot request's Bot name, or `unknown`                            |
+| `reader` | A feed fetch's feed reader, such as `Inoreader`                   |
+| `subscribers` | A feed fetch's reported subscriber count; absent if the reader reports none |
 
 For example:
 
 ```json
 {"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
 
 ### The metrics
@@ -296,7 +320,13 @@ site's port:
 | Metric                        | Type    | Labels | Counts                                                 |
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
-| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as images, assets, the feed, redirects and 404s |
+| `goblog_bot_requests_total`   | counter | `bot`, `status_class` (`2xx`, `3xx`, `4xx` or `5xx`), `kind` | Bot requests |
+| `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
+| `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
+| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects and 404s |
+
+Bot and feed reader names come from the crawler list, so their label sets
+are bounded.
 
 ### Settings
 
