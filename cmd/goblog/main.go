@@ -1,6 +1,7 @@
 // Command goblog is an HTTP server, a Deployable. It clones the Content
 // Repository, renders the site and serves it, along with mjolnir's probes
-// (/livez, /readyz and /startupz), and drains gracefully on SIGTERM. See
+// (/livez, /readyz and /startupz), and its Site Statistics metrics on a
+// separate port, and drains gracefully on SIGTERM. See
 // package app for its environment variables.
 //
 // `goblog build -out dir [-content dir] [-drafts]` instead renders the site
@@ -61,6 +62,16 @@ func serve() {
 	// has rendered the site. Polling keeps it in sync from then on, and
 	// retries a failed first sync.
 	go a.Run(context.Background())
+
+	// The Site Statistics metrics get their own port, so they're never
+	// public through the site's route. If it fails, the site still serves.
+	metricsAddr := net.JoinHostPort("", cfg.MetricsPort)
+	go func() {
+		lg.Info("Metrics server starting", "addr", metricsAddr)
+		if serveErr := router.NewServer(metricsAddr, a.MetricsHandler()).ListenAndServe(); serveErr != nil {
+			lg.Error("Metrics server failed; still serving the site", "error", serveErr)
+		}
+	}()
 
 	r := a.Router()
 	addr := net.JoinHostPort("", cfg.Port)

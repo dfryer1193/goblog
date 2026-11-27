@@ -48,3 +48,16 @@ func TestWebhookSecretComesFromTheEnvironment(t *testing.T) {
 		t.Errorf("WebhookSecret = %q, want s3cret", cfg.WebhookSecret)
 	}
 }
+
+func TestMetricsPortComesFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]string{"": "9090", "9100": "9100"} {
+		cfg, err := configFrom(map[string]string{"GOBLOG_METRICS_PORT": value})
+		if err != nil {
+			t.Fatalf("GOBLOG_METRICS_PORT=%q: %v", value, err)
+		}
+		if cfg.MetricsPort != want {
+			t.Errorf("GOBLOG_METRICS_PORT=%q: MetricsPort = %q, want %q", value, cfg.MetricsPort, want)
+		}
+	}
+}

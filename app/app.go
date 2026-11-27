@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,6 +44,9 @@ const (
 	EnvWorkDir = "GOBLOG_WORK_DIR"
 	// EnvPort is the port to listen on. Default: 8080.
 	EnvPort = "PORT"
+	// EnvMetricsPort is the port serving the Site Statistics metrics at
+	// /metrics, apart from the site. Default: 9090.
+	EnvMetricsPort = "GOBLOG_METRICS_PORT"
 	// EnvWebhookSecret is the GitHub webhook's secret. Optional; without
 	// it, the webhook endpoint is disabled (404).
 	EnvWebhookSecret = "GOBLOG_WEBHOOK_SECRET" //nolint:gosec // the variable's name, not a secret
@@ -58,6 +62,12 @@ const syncTimeout = 5 * time.Minute
 
 // defaultPort is the port goblog listens on when PORT isn't set.
 const defaultPort = "8080"
+
+// defaultMetricsPort is the metrics port when GOBLOG_METRICS_PORT isn't set.
+const defaultMetricsPort = "9090"
+
+// MetricsPath is the metrics handler's path.
+const MetricsPath = "/metrics"
 
 // defaultPollInterval is how often goblog polls when GOBLOG_POLL_INTERVAL
 // isn't set.
@@ -87,6 +97,8 @@ type Config struct {
 	WorkDir string
 	// Port is the port to listen on.
 	Port string
+	// MetricsPort is the port the metrics handler listens on.
+	MetricsPort string
 	// WebhookSecret is the GitHub webhook's secret, or empty to disable the
 	// webhook endpoint.
 	WebhookSecret string
@@ -119,6 +131,7 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		KnownHosts:    get(EnvKnownHosts, ""),
 		WorkDir:       get(EnvWorkDir, filepath.Join(os.TempDir(), "goblog")),
 		Port:          get(EnvPort, defaultPort),
+		MetricsPort:   get(EnvMetricsPort, defaultMetricsPort),
 		WebhookSecret: get(EnvWebhookSecret, ""),
 	}
 	if cfg.ContentURL == "" {
@@ -137,6 +150,7 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 type App struct {
 	publisher *service.Publisher
 	router    *router.Router
+	metrics   http.Handler
 	logger    *slog.Logger
 	// pollInterval is how often Run polls.
 	pollInterval time.Duration
@@ -169,6 +183,9 @@ func New(cfg Config) (*App, error) {
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
 	siteStats := stats.New(stats.Config{Settings: cfg.StatsConfig, Now: cfg.Now, Output: cfg.StatsOutput})
+	metrics := http.NewServeMux()
+	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
+	a.metrics = metrics
 	a.router, err = api.NewRouter(
 		publisher,
 		api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire},
@@ -184,6 +201,12 @@ func New(cfg Config) (*App, error) {
 // and tests can serve it with httptest.
 func (a *App) Router() *router.Router {
 	return a.router
+}
+
+// MetricsHandler serves the Site Statistics metrics at MetricsPath, for the
+// metrics port. It's never on the Router.
+func (a *App) MetricsHandler() http.Handler {
+	return a.metrics
 }
 
 // Sync is the "sync now" operation: fetch the Content Repository's latest

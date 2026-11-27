@@ -13,7 +13,12 @@ import (
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// labelKind is the metrics' label for the kind of page.
+const labelKind = "kind"
 
 // Settings is the StatsConfig: the settings Site Statistics read on every
 // request, so changes apply live.
@@ -38,6 +43,12 @@ type Stats struct {
 	settings Settings
 	now      func() time.Time
 	lines    *emitter
+	registry *prometheus.Registry
+	// pageViews counts Page Views by kind of page.
+	pageViews *prometheus.CounterVec
+	// others counts the requests that are none of the other classes, by
+	// kind of page.
+	others *prometheus.CounterVec
 }
 
 // New builds Site Statistics from cfg.
@@ -54,7 +65,23 @@ func New(cfg Config) *Stats {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
+	s.registry = prometheus.NewRegistry()
+	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_page_views_total",
+		Help: "Page Views, by kind of page.",
+	}, []string{labelKind})
+	s.others = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_other_requests_total",
+		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
+	}, []string{labelKind})
+	s.registry.MustRegister(s.pageViews, s.others)
 	return s
+}
+
+// MetricsHandler serves Site Statistics' Prometheus metrics. It belongs on
+// its own port, never on the site's router.
+func (s *Stats) MetricsHandler() http.Handler {
+	return promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{})
 }
 
 // Wrap returns next with Site Statistics around it: every request next
@@ -74,10 +101,12 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // record emits what Site Statistics learn from a request answered with
 // status.
 func (s *Stats) record(r *http.Request, status int) {
-	kind := kindOf(r.URL.Path)
+	kind := kindOf(r.URL.Path, status)
 	if !isPageView(r, kind, status) {
+		s.others.WithLabelValues(kind).Inc()
 		return
 	}
+	s.pageViews.WithLabelValues(kind).Inc()
 	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
 }
 

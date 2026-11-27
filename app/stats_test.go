@@ -3,6 +3,7 @@ package app_test
 import (
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -117,4 +118,52 @@ func assetPath(t *testing.T, g *goblog) string {
 		t.Fatal("the index links no stylesheet")
 	}
 	return match[1]
+}
+
+func TestMetricsCountPageViewsAndOtherRequestsByKindOfPage(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	asset := assetPath(t, g) // a Page View of the index
+
+	for _, path := range []string{"/posts/hello/", "/posts/hello/", "/about/", "/tags/k8s/"} {
+		g.get(t, path)
+	}
+	g.request(t, http.MethodHead, "/posts/hello/", nil)
+	for _, path := range []string{"/images/cat.png", asset, "/feed.xml", "/sitemap.xml", "/nope/", "/posts/hello"} {
+		g.get(t, path)
+	}
+
+	for sample, want := range map[string]float64{
+		`goblog_page_views_total{kind="index"}`:       1,
+		`goblog_page_views_total{kind="post"}`:        2,
+		`goblog_page_views_total{kind="page"}`:        1,
+		`goblog_page_views_total{kind="tag"}`:         1,
+		`goblog_page_views_total{kind="image"}`:       0,
+		`goblog_other_requests_total{kind="post"}`:    1,
+		`goblog_other_requests_total{kind="image"}`:   1,
+		`goblog_other_requests_total{kind="asset"}`:   1,
+		`goblog_other_requests_total{kind="feed"}`:    1,
+		`goblog_other_requests_total{kind="sitemap"}`: 1,
+		`goblog_other_requests_total{kind="missing"}`: 1,
+		`goblog_other_requests_total{kind="other"}`:   1,
+	} {
+		if got := g.metric(t, sample); got != want {
+			t.Errorf("%s = %v, want %v", sample, got, want)
+		}
+	}
+}
+
+func TestMetricsAreNotOnTheSitesRouter(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	g.get(t, "/")
+
+	resp := g.get(t, "/metrics")
+
+	assertStatus(t, "/metrics", resp, http.StatusNotFound)
+	if strings.Contains(resp.body, "goblog_page_views_total") {
+		t.Errorf("GET /metrics on the site serves metrics:\n%s", resp.body)
+	}
 }

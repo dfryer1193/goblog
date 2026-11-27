@@ -9,20 +9,38 @@ import (
 
 // The kinds of page a request can be for.
 const (
-	kindPost  = "post"
-	kindPage  = "page"
-	kindIndex = "index"
-	kindTag   = "tag"
-	kindOther = "other"
+	kindPost    = "post"
+	kindPage    = "page"
+	kindIndex   = "index"
+	kindTag     = "tag"
+	kindImage   = "image"
+	kindAsset   = "asset"
+	kindFeed    = "feed"
+	kindSitemap = "sitemap"
+	kindMissing = "missing"
+	kindOther   = "other"
 )
 
-// kindOf is the kind of page at urlPath.
-func kindOf(urlPath string) string {
-	if urlPath == "/" {
+// kindOf is the kind of page at urlPath, answered with status.
+func kindOf(urlPath string, status int) string {
+	if status == http.StatusNotFound {
+		return kindMissing
+	}
+	switch urlPath {
+	case "/":
 		return kindIndex
+	case "/" + models.FeedFile:
+		return kindFeed
+	case "/" + models.SitemapFile:
+		return kindSitemap
 	}
 	section, rest, _ := strings.Cut(strings.TrimPrefix(urlPath, "/"), "/")
 	switch {
+	case section == models.ImagesSection && rest != "":
+		return kindImage
+	case (section == models.AssetsSection || section == models.FontsSection || section == models.LicensesSection) &&
+		rest != "":
+		return kindAsset
 	case section == models.PostsSection && isFolder(rest):
 		return kindPost
 	case section == models.TagsSection && (rest == "" || isFolder(rest)):

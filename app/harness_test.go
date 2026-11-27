@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -217,6 +218,8 @@ type goblog struct {
 	stats *statsOutput
 	// statsConfig is goblog's StatsConfig.
 	statsConfig *fakeStatsConfig
+	// metrics serves goblog's metrics handler, as its metrics port does.
+	metrics *httptest.Server
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
@@ -253,7 +256,50 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 	}
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
-	return &goblog{app: a, srv: srv, clock: clock, workDir: cfg.WorkDir, stats: output, statsConfig: statsConfig}
+	metrics := httptest.NewServer(a.MetricsHandler())
+	t.Cleanup(metrics.Close)
+	return &goblog{
+		app:         a,
+		srv:         srv,
+		clock:       clock,
+		workDir:     cfg.WorkDir,
+		stats:       output,
+		statsConfig: statsConfig,
+		metrics:     metrics,
+	}
+}
+
+// metric scrapes goblog's metrics handler at /metrics and returns the value
+// of the sample name{labels}, such as goblog_page_views_total{kind="post"},
+// or 0 if there's no such sample.
+func (g *goblog) metric(t *testing.T, sample string) float64 {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.metrics.URL+"/metrics", http.NoBody)
+	if err != nil {
+		t.Fatalf("building metrics request: %v", err)
+	}
+	resp, err := g.metrics.Client().Do(req)
+	if err != nil {
+		t.Fatalf("scraping metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading metrics: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d; body:\n%s", resp.StatusCode, body)
+	}
+	for line := range strings.Lines(string(body)) {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
+			f, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
+			}
+			return f
+		}
+	}
+	return 0
 }
 
 // statsLines waits for goblog to have written n Site Statistics lines, and
