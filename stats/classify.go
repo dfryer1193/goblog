@@ -16,8 +16,8 @@ const (
 	kindOther = "other"
 )
 
-// kindOf is the kind of page at urlPath, answered with status.
-func kindOf(urlPath string, _ int) string {
+// kindOf is the kind of page at urlPath.
+func kindOf(urlPath string) string {
 	if urlPath == "/" {
 		return kindIndex
 	}
@@ -46,7 +46,22 @@ func isHTMLPage(kind string) bool {
 }
 
 // isPageView reports whether r, for a page of kind answered with status, is
-// a Page View.
+// a Page View: a GET that isn't a prefetch, for an HTML page, answered 200
+// or 304.
 func isPageView(r *http.Request, kind string, status int) bool {
-	return r.Method == http.MethodGet && isHTMLPage(kind) && status == http.StatusOK
+	return r.Method == http.MethodGet &&
+		!isPrefetch(r) &&
+		isHTMLPage(kind) &&
+		(status == http.StatusOK || status == http.StatusNotModified)
+}
+
+// isPrefetch reports whether r is a browser's prefetch (or prerender), as
+// its Sec-Purpose or Purpose header says.
+func isPrefetch(r *http.Request) bool {
+	for _, header := range []string{"Sec-Purpose", "Purpose"} {
+		if strings.Contains(strings.ToLower(r.Header.Get(header)), "prefetch") {
+			return true
+		}
+	}
+	return false
 }

@@ -74,7 +74,7 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // record emits what Site Statistics learn from a request answered with
 // status.
 func (s *Stats) record(r *http.Request, status int) {
-	kind := kindOf(r.URL.Path, status)
+	kind := kindOf(r.URL.Path)
 	if !isPageView(r, kind, status) {
 		return
 	}
