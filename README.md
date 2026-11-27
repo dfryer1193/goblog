@@ -429,7 +429,7 @@ Change its Items with Mimir Overrides for Deployable `goblog`:
 
 | Item                | Type         | Meaning | Default |
 | ------------------- | ------------ | ------- | ------- |
-| `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP, before anything else. An entry that isn't a CIDR is skipped with a warning naming it (once, not on every request), and the rest still apply | empty |
+| `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP before anything else, so even a Bot or feed reader there emits nothing. An entry that isn't a CIDR is skipped with a warning naming it (once, not on every request), and the rest still apply | empty |
 | `enabled`           | `bool`       | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
 
 Keep your networks in Mimir, not in the Content Repository, so they're never

@@ -358,6 +358,22 @@ func writeFile(t *testing.T, path, content string) {
 // or 0 if there's no such sample.
 func (g *goblog) metric(t *testing.T, sample string) float64 {
 	t.Helper()
+	for line := range strings.Lines(g.metricsBody(t)) {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
+			f, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
+			}
+			return f
+		}
+	}
+	return 0
+}
+
+// metricsBody scrapes goblog's metrics handler at /metrics and returns what
+// it serves.
+func (g *goblog) metricsBody(t *testing.T) string {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.metrics.URL+"/metrics", http.NoBody)
 	if err != nil {
 		t.Fatalf("building metrics request: %v", err)
@@ -374,16 +390,7 @@ func (g *goblog) metric(t *testing.T, sample string) float64 {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /metrics status = %d; body:\n%s", resp.StatusCode, body)
 	}
-	for line := range strings.Lines(string(body)) {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
-			f, parseErr := strconv.ParseFloat(value, 64)
-			if parseErr != nil {
-				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
-			}
-			return f
-		}
-	}
-	return 0
+	return string(body)
 }
 
 // statsLines waits for goblog to have written n Site Statistics lines, and

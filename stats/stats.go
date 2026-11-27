@@ -190,8 +190,6 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	kind := kindOf(r.URL.Path, status)
-	// Excluded requests (from excluded_networks) are to be checked here,
-	// before every other class.
 	if kind == kindFeed && s.recordFeedFetch(r, status) {
 		return
 	}

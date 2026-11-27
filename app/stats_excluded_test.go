@@ -91,3 +91,29 @@ func TestAnInvalidExcludedNetworkIsSkippedWithOneWarning(t *testing.T) {
 		t.Fatalf("warnings = %q, want a second naming 203.0.113.0/33", warnings)
 	}
 }
+
+func TestAnExcludedNetworkComesBeforeBotsAndFeedReaders(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.statsConfig.setExcludedNetworks("203.0.113.0/24")
+	g.sync(t)
+
+	for _, userAgent := range []string{"curl/8.5.0", "Feedly/1.0 (+http://www.feedly.com/fetcher.html; 42 subscribers)"} {
+		for _, path := range []string{"/posts/hello/", "/feed.xml"} {
+			g.request(t, http.MethodGet, path, http.Header{
+				"X-Forwarded-For": {"203.0.113.7"},
+				"User-Agent":      {userAgent},
+			})
+		}
+	}
+	g.getFrom(t, "198.51.100.1", "/about/")
+
+	lines := g.statsLines(t, 1)
+	assertPageView(t, lines[0], "/about/", "page")
+	body := g.metricsBody(t)
+	for _, family := range []string{"goblog_bot_requests_total{", "goblog_feed_fetches_total{", "goblog_feed_subscribers{"} {
+		if strings.Contains(body, family) {
+			t.Errorf("metrics have a %s sample for an excluded network:\n%s", family, body)
+		}
+	}
+}
