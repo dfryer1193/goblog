@@ -12,6 +12,8 @@ const (
 	classPageView = "page_view"
 	// classBot is a Bot's request.
 	classBot = "bot"
+	// classFeedFetch is a known feed reader's request for the feed.
+	classFeedFetch = "feed_fetch"
 )
 
 // line is one Site Statistics JSON line. Its field names are a contract
@@ -31,4 +33,9 @@ type line struct {
 	Kind string `json:"kind"`
 	// Bot is a Bot request's Bot name, or botUnknown.
 	Bot string `json:"bot,omitempty"`
+	// Reader is a feed fetch's feed reader.
+	Reader string `json:"reader,omitempty"`
+	// Subscribers is the subscriber count a feed fetch's feed reader
+	// reports, if it reports one.
+	Subscribers *int `json:"subscribers,omitempty"`
 }

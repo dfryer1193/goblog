@@ -24,6 +24,8 @@ const (
 	labelKind = "kind"
 	// labelBot is the Bot name.
 	labelBot = "bot"
+	// labelReader is the feed reader's name.
+	labelReader = "reader"
 	// labelStatusClass is the class of the response's status, such as 2xx.
 	labelStatusClass = "status_class"
 )
@@ -52,12 +54,18 @@ type Stats struct {
 	now      func() time.Time
 	lines    *emitter
 	crawlers *crawlers
+	readers  *feedReaders
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
 	// botRequests counts Bot requests by Bot name, status class and kind
 	// of page.
 	botRequests *prometheus.CounterVec
+	// feedFetches counts feed fetches by feed reader.
+	feedFetches *prometheus.CounterVec
+	// feedSubscribers is the latest subscriber count each feed reader
+	// reported.
+	feedSubscribers *prometheus.GaugeVec
 	// others counts the requests that are none of the other classes, by
 	// kind of page.
 	others *prometheus.CounterVec
@@ -82,6 +90,7 @@ func New(cfg Config) *Stats {
 		panic(err)
 	}
 	s.crawlers = crawlers
+	s.readers = newFeedReaders(crawlers)
 	s.lines = newEmitter(output)
 	s.registry = prometheus.NewRegistry()
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -96,7 +105,15 @@ func New(cfg Config) *Stats {
 		Name: "goblog_bot_requests_total",
 		Help: "Bot requests, by Bot name (from the crawler list, or unknown), status class and kind of page.",
 	}, []string{labelBot, labelStatusClass, labelKind})
-	s.registry.MustRegister(s.pageViews, s.botRequests, s.others)
+	s.feedFetches = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "goblog_feed_fetches_total",
+		Help: "Feed fetches, by feed reader.",
+	}, []string{labelReader})
+	s.feedSubscribers = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "goblog_feed_subscribers",
+		Help: "The subscriber count each feed reader last reported in its User-Agent.",
+	}, []string{labelReader})
+	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers, s.others)
 	return s
 }
 
@@ -124,6 +141,11 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // status.
 func (s *Stats) record(r *http.Request, status int) {
 	kind := kindOf(r.URL.Path, status)
+	// Excluded requests (from excluded_networks) are to be checked here,
+	// before every other class.
+	if kind == kindFeed && s.recordFeedFetch(r, status) {
+		return
+	}
 	if bot, ok := s.bot(r.UserAgent()); ok {
 		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
 		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
@@ -137,9 +159,27 @@ func (s *Stats) record(r *http.Request, status int) {
 	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
 }
 
+// recordFeedFetch emits r, a request for the feed answered with status, as
+// a feed fetch if a known feed reader sent it, and reports whether it did.
+func (s *Stats) recordFeedFetch(r *http.Request, status int) bool {
+	reader, ok := s.readers.match(r.UserAgent())
+	if !ok {
+		return false
+	}
+	s.feedFetches.WithLabelValues(reader.name).Inc()
+	if reader.subscribers != nil {
+		s.feedSubscribers.WithLabelValues(reader.name).Set(float64(*reader.subscribers))
+	}
+	s.emit(line{
+		Time: s.now().UTC(), Class: classFeedFetch, Path: r.URL.Path, Status: status, Kind: kindFeed,
+		Reader: reader.name, Subscribers: reader.subscribers,
+	})
+	return true
+}
+
 // bot is the Bot name of a request with userAgent, if it's a Bot's.
 func (s *Stats) bot(userAgent string) (string, bool) {
-	if cr, ok := s.crawlers.match(userAgent); ok {
+	if cr, ok := s.crawlers.match(userAgent, false); ok {
 		return cr.name, true
 	}
 	if botByHeuristics(userAgent) {

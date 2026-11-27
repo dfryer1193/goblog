@@ -109,16 +109,17 @@ func newCrawlers() (*crawlers, error) {
 }
 
 // match returns the first crawler in the list that matches userAgent, if
-// any does.
-func (c *crawlers) match(userAgent string) (crawler, bool) {
+// any does. With feedReaders, it considers only the list's feed readers.
+func (c *crawlers) match(userAgent string, feedReaders bool) (crawler, bool) {
 	best := len(c.list)
 	for i := 0; i+prefilterLen <= len(userAgent); i++ {
 		for _, cand := range c.byPrefix[userAgent[i:i+prefilterLen]] {
 			if cand.crawler >= best {
 				break
 			}
-			re := c.list[cand.crawler].re
-			if strings.HasPrefix(userAgent[i:], cand.literal) && (re == nil || re.MatchString(userAgent)) {
+			cr := c.list[cand.crawler]
+			if (!feedReaders || cr.feedReader) && strings.HasPrefix(userAgent[i:], cand.literal) &&
+				(cr.re == nil || cr.re.MatchString(userAgent)) {
 				best = cand.crawler
 			}
 		}
@@ -127,7 +128,7 @@ func (c *crawlers) match(userAgent string) (crawler, bool) {
 		if j >= best {
 			break
 		}
-		if c.list[j].re.MatchString(userAgent) {
+		if cr := c.list[j]; (!feedReaders || cr.feedReader) && cr.re.MatchString(userAgent) {
 			best = j
 		}
 	}
@@ -207,6 +208,9 @@ func botName(pattern string) string {
 		`pinterest\.com\/bot`:          "Pinterestbot",
 		`[cC]laude[bB]ot`:              "ClaudeBot",
 		`Datadog( |\/)Synthetic`:       "Datadog Synthetic",
+		`inoreader`:                    "Inoreader",
+		`theoldreader\.com`:            "The Old Reader",
+		`Feedfetcher-Google`:           "Google Feedfetcher",
 	}
 	if name, ok := readable[pattern]; ok {
 		return name
