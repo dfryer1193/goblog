@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
+	useragent "github.com/medama-io/go-useragent"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -52,7 +53,9 @@ type Stats struct {
 	siteURL  func() string
 	sources  sourceList
 	lines    *emitter
-	registry *prometheus.Registry
+	// userAgents parses User-Agents into families.
+	userAgents *useragent.Parser
+	registry   *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
 	pageViews *prometheus.CounterVec
 	// others counts the requests that are none of the other classes, by
@@ -78,6 +81,8 @@ func New(cfg Config) (*Stats, error) {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
+	// Built here, in serve mode only: it takes a few milliseconds and MiB.
+	s.userAgents = useragent.NewParser()
 	s.registry = prometheus.NewRegistry()
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
@@ -120,7 +125,18 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
-	l := line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind}
+	f := familiesOf(s.userAgents, r.UserAgent())
+	l := line{
+		Time:         s.now().UTC(),
+		Class:        classPageView,
+		Path:         r.URL.Path,
+		Status:       status,
+		Kind:         kind,
+		Browser:      f.browser,
+		BrowserMajor: f.browserMajor,
+		OS:           f.os,
+		Device:       f.device,
+	}
 	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
 }
 

@@ -281,6 +281,10 @@ only add fields.
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
+| `browser`       | The browser's family, from the User-Agent, such as `Firefox`, `Chrome`, `Safari` or `Edge`; `other` if it isn't recognised |
+| `browser_major` | The browser's major version, such as `145`. Omitted if it isn't known |
+| `os`            | The operating system's family: `Windows`, `macOS`, `Linux`, `ChromeOS`, `iOS`, `Android`, `FreeBSD` or `OpenBSD`; `other` if it isn't recognised |
+| `device`        | The device type: `desktop`, `mobile`, `tablet` or `tv`; `unknown` if it isn't recognised |
 | `source` | The Source's name, such as `Google`, `Hacker News`, `example.co.uk` or a Campaign's source. Absent for `direct` and `internal` |
 | `source_kind` | The kind of Source: `search`, `social`, `site`, `campaign`, `direct` or `internal` |
 | `campaign_source` | A Campaign's `utm_source` or `ref`. Absent unless `source_kind` is `campaign` |
@@ -291,8 +295,16 @@ only add fields.
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","source":"Hacker News","source_kind":"social","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
 ```
+
+The browser, operating system and device come from the User-Agent, parsed
+with [medama-io/go-useragent](https://github.com/medama-io/go-useragent)
+(MIT). The browser families are that parser's fixed set (such as `Opera`,
+`Vivaldi`, `Samsung Browser` and `Firefox`), so there are only ever a few
+values. A line never carries the raw User-Agent, or any version finer than
+the browser's major one. Safari on an iPad sends the same User-Agent as Safari
+on a Mac by default, so it counts as `macOS` and `desktop`.
 
 ### Sources and Campaigns
 
