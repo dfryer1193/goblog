@@ -217,6 +217,9 @@ goblog ships no manifests, so here is everything a deployment needs:
 - **Salt:** a Secret holding the daily salt, mounted read-only and named by
   `GOBLOG_STATS_SALT_FILE`, replaced every day at 00:00 UTC by a scheduled
   job. See [the salt file](#the-salt-file).
+- **Mimir:** `MIMIR_ENVIRONMENT` and read-only object storage credentials,
+  so the [StatsConfig](#settings) can change live. Without them, goblog
+  runs on its defaults.
 - **Webhook:** the Content Repository's push webhook goes to `/webhook` on
   the site's public hostname.
 - **Replicas:** each replica clones, polls and renders on its own, with no
@@ -388,13 +391,39 @@ site's port:
 ### Settings
 
 Site Statistics read their settings, the `StatsConfig`, on every request, so
-a change applies at once. For now goblog always uses the defaults:
+a change applies at once, with no restart or redeploy. The `StatsConfig` is a
+[Mimir](https://github.com/worldtree-industries/mimir) Config,
+`github.com/dfryer1193/goblog/stats.StatsConfig` (shown as "Site
+Statistics"), defined in [`stats/stats_config.json`](stats/stats_config.json).
+Change its Items with Mimir Overrides for Deployable `goblog`:
 
-| Setting   | Meaning                                                          | Default |
-| --------- | ---------------------------------------------------------------- | ------- |
-| `enabled` | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
+| Item                | Type         | Meaning | Default |
+| ------------------- | ------------ | ------- | ------- |
+| `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP, before anything else. An entry that isn't a CIDR is skipped with a warning naming it (once, not on every request), and the rest still apply | empty |
+| `enabled`           | `bool`       | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
 
-`goblog build` doesn't count anything.
+Keep your networks in Mimir, not in the Content Repository, so they're never
+published.
+
+Only serve mode starts Mimir's client; `goblog build` never does, and doesn't
+count anything. The client needs this environment (see Mimir's README for
+the rest, such as `MIMIR_POLL_INTERVAL`):
+
+| Variable | Meaning |
+| -------- | ------- |
+| `MIMIR_ENVIRONMENT` | The Environment: `dev`, `staging` or `prod`. Required for anything but the defaults |
+| `MIMIR_DEPLOYABLE` | The Deployable. Leave it unset: it defaults to `goblog`, from the binary's main package |
+| `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | The object storage Mimir publishes Snapshots to, read from bucket `mimir-<environment>`. goblog needs read-only access |
+| `MIMIR_SERVER_URL` | mimir-server, which goblog registers its Config with. Default: `http://mimir-server.mimir-config` |
+
+Without `MIMIR_ENVIRONMENT` or object storage, goblog logs why and runs on
+the defaults. If object storage doesn't answer, it keeps its last values (the
+defaults, at a cold start) and picks the real ones up at a later poll. On a
+cold start the client waits up to 5 seconds for its first read, in the
+background: goblog serves straight away, on the defaults until then.
+
+After changing `stats/stats_config.json`, regenerate its Go code with
+`go generate ./stats`.
 
 ## Development
 
