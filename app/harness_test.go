@@ -370,6 +370,32 @@ func (g *goblog) metric(t *testing.T, sample string) float64 {
 	return 0
 }
 
+// assertMetrics fails the test unless each of want's samples has its value
+// within 5 seconds. Site Statistics count a request after its response is
+// written, so a scrape right after a response may not count it yet.
+func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		wrong := map[string]float64{}
+		for sample, value := range want {
+			if got := g.metric(t, sample); got != value {
+				wrong[sample] = got
+			}
+		}
+		if len(wrong) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for sample, got := range wrong {
+				t.Errorf("%s = %v, want %v", sample, got, want[sample])
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // statsLines waits for goblog to have written n Site Statistics lines, and
 // returns them decoded. It fails the test if there are more, or if they
 // don't arrive.
