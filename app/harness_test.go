@@ -207,6 +207,13 @@ func (c *fakeStatsConfig) Enabled() bool {
 	return !c.disabled
 }
 
+// setEnabled turns Site Statistics on or off.
+func (c *fakeStatsConfig) setEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disabled = !enabled
+}
+
 // goblog is a running goblog under test.
 type goblog struct {
 	app   *app.App
@@ -229,6 +236,13 @@ type goblog struct {
 // sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
+	return startGoblogWritingStatsTo(t, repo, env, nil)
+}
+
+// startGoblogWritingStatsTo is startGoblog, but goblog writes its Site
+// Statistics lines to output instead of capturing them, unless it's nil.
+func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]string, output io.Writer) *goblog {
+	t.Helper()
 	workDir := t.TempDir()
 	vars := map[string]string{
 		"GOBLOG_CONTENT_URL":    repo.url(),
@@ -245,8 +259,11 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 	}
 	clock := &testClock{now: startTime()}
 	cfg.Now = clock.Now
-	output := &statsOutput{}
-	cfg.StatsOutput = output
+	captured := &statsOutput{}
+	cfg.StatsOutput = captured
+	if output != nil {
+		cfg.StatsOutput = output
+	}
 	statsConfig := &fakeStatsConfig{}
 	cfg.StatsConfig = statsConfig
 
@@ -263,7 +280,7 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 		srv:         srv,
 		clock:       clock,
 		workDir:     cfg.WorkDir,
-		stats:       output,
+		stats:       captured,
 		statsConfig: statsConfig,
 		metrics:     metrics,
 	}

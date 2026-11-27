@@ -1,10 +1,12 @@
 package app_test
 
 import (
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // assertPageView fails the test unless line is a Page View of path, of kind,
@@ -165,5 +167,75 @@ func TestMetricsAreNotOnTheSitesRouter(t *testing.T) {
 	assertStatus(t, "/metrics", resp, http.StatusNotFound)
 	if strings.Contains(resp.body, "goblog_page_views_total") {
 		t.Errorf("GET /metrics on the site serves metrics:\n%s", resp.body)
+	}
+}
+
+func TestDisablingSiteStatisticsStopsLinesAndMetricsButNotTheSite(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	g.get(t, "/posts/hello/")
+	g.statsLines(t, 1)
+
+	g.statsConfig.setEnabled(false)
+	resp := g.get(t, "/posts/hello/")
+	assertStatus(t, "/posts/hello/", resp, http.StatusOK)
+	assertContains(t, "/posts/hello/", resp.body, "Hello body.")
+	assertStatus(t, "/images/cat.png", g.get(t, "/images/cat.png"), http.StatusOK)
+
+	g.statsConfig.setEnabled(true)
+	g.get(t, "/about/")
+
+	lines := g.statsLines(t, 2)
+	assertPageView(t, lines[0], "/posts/hello/", "post")
+	assertPageView(t, lines[1], "/about/", "page")
+	for sample, want := range map[string]float64{
+		`goblog_page_views_total{kind="post"}`:      1,
+		`goblog_page_views_total{kind="page"}`:      1,
+		`goblog_other_requests_total{kind="image"}`: 0,
+	} {
+		if got := g.metric(t, sample); got != want {
+			t.Errorf("%s = %v, want %v", sample, got, want)
+		}
+	}
+}
+
+// stalledWriter is an output whose writes block until the test ends.
+type stalledWriter struct {
+	done <-chan struct{}
+}
+
+// Write blocks until the test ends, then fails.
+func (w stalledWriter) Write([]byte) (int, error) {
+	<-w.done
+	return 0, io.ErrClosedPipe
+}
+
+func TestAStalledOutputDoesntDelayRequests(t *testing.T) {
+	t.Parallel()
+	done := make(chan struct{})
+	g := startGoblogWritingStatsTo(t, statsSite(t), nil, stalledWriter{done: done})
+	// Registered after the server's cleanup, so it runs first: a handler
+	// stuck behind the output is released, and the server can close.
+	t.Cleanup(func() { close(done) })
+	g.sync(t)
+
+	client := g.srv.Client()
+	client.Timeout = 2 * time.Second
+	// Far more Page Views than any buffer for lines would hold.
+	for range 3000 {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.srv.URL+"/posts/hello/", http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("GET /posts/hello/ with a stalled output: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /posts/hello/ with a stalled output: status %d", resp.StatusCode)
+		}
 	}
 }
