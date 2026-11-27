@@ -199,6 +199,22 @@ func (o *statsOutput) lines() []string {
 type fakeStatsConfig struct {
 	mu       sync.Mutex
 	disabled bool
+	excluded []string
+}
+
+// ExcludedNetworks are the CIDRs whose requests emit nothing. There are
+// none by default.
+func (c *fakeStatsConfig) ExcludedNetworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.excluded
+}
+
+// setExcludedNetworks replaces the excluded networks with cidrs.
+func (c *fakeStatsConfig) setExcludedNetworks(cidrs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.excluded = cidrs
 }
 
 // Enabled reports whether Site Statistics are on. They are by default.

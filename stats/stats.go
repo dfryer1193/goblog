@@ -30,6 +30,10 @@ type Settings interface {
 	// Enabled reports whether Site Statistics are on. While they're off,
 	// nothing is emitted.
 	Enabled() bool
+	// ExcludedNetworks are CIDRs, such as the author's own networks, whose
+	// requests emit nothing at all. Entries that aren't CIDRs are skipped,
+	// with a warning.
+	ExcludedNetworks() []string
 }
 
 // Config is what Site Statistics are built from.
@@ -55,6 +59,7 @@ type Config struct {
 // Stats is Site Statistics, built by New.
 type Stats struct {
 	settings Settings
+	excluded *excludedNetworks
 	now      func() time.Time
 	siteURL  func() string
 	sources  sourceList
@@ -99,6 +104,7 @@ func New(cfg Config) (*Stats, error) {
 		Name: "goblog_stats_salt_loaded",
 		Help: "Whether a salt for Visitor IDs is loaded: 1 if so, 0 if Page Views have no Visitor ID.",
 	})
+	s.excluded = newExcludedNetworks(logger)
 	s.salt = newSalt(cfg.SaltFile, s.now, logger, saltLoaded)
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
@@ -133,8 +139,14 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 }
 
 // record emits what Site Statistics learn from a request answered with
-// status.
+// status. Each request is in one class, checked in order: Excluded first,
+// ahead of every other class.
 func (s *Stats) record(r *http.Request, status int) {
+	// Excluded: a request from an excluded network emits nothing at all,
+	// neither a line nor a metric.
+	if s.excluded.contains(s.settings.ExcludedNetworks(), clientIP(r)) {
+		return
+	}
 	kind := kindOf(r.URL.Path, status)
 	if !isPageView(r, kind, status) {
 		s.others.WithLabelValues(kind).Inc()
@@ -184,7 +196,8 @@ func (s *Stats) emit(l line) {
 // defaults are the StatsConfig's defaults.
 type defaults struct{}
 
-// Defaults are the StatsConfig's defaults: Site Statistics are on.
+// Defaults are the StatsConfig's defaults: Site Statistics are on, and no
+// networks are excluded.
 func Defaults() Settings {
 	return defaults{}
 }
@@ -192,4 +205,9 @@ func Defaults() Settings {
 // Enabled is true by default.
 func (defaults) Enabled() bool {
 	return true
+}
+
+// ExcludedNetworks are empty by default.
+func (defaults) ExcludedNetworks() []string {
+	return nil
 }
