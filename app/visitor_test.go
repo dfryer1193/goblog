@@ -69,3 +69,27 @@ func TestTheSameIPAndUserAgentGetTheSameVisitorIDAndOthersDont(t *testing.T) {
 		t.Errorf("a different User-Agent got the same Visitor ID %q", ids[3])
 	}
 }
+
+func TestTheClientIPIsTheRightmostForwardedForEntryOrThePeer(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+
+	rightmost := visitFrom(t, g, "203.0.113.7", firefox)
+	behindAnotherProxy := visitFrom(t, g, "198.51.100.1, 203.0.113.7", firefox)
+	leftmost := visitFrom(t, g, "198.51.100.1", firefox)
+	// The test server's TCP peer is the test, on loopback.
+	peer := visitFrom(t, g, "127.0.0.1", firefox)
+	noHeader := visitorID(t, visit(t, g, http.Header{"User-Agent": {firefox}}))
+
+	if behindAnotherProxy != rightmost {
+		t.Errorf("X-Forwarded-For: 198.51.100.1, 203.0.113.7 got Visitor ID %q, want %q, as from 203.0.113.7",
+			behindAnotherProxy, rightmost)
+	}
+	if leftmost == rightmost {
+		t.Errorf("X-Forwarded-For: 198.51.100.1 got 203.0.113.7's Visitor ID %q", leftmost)
+	}
+	if noHeader != peer {
+		t.Errorf("no X-Forwarded-For got Visitor ID %q, want %q, as from the TCP peer 127.0.0.1", noHeader, peer)
+	}
+}
