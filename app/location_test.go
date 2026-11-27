@@ -135,3 +135,95 @@ func TestWithTheDownloadFailingLinesOmitLocationWithAWarning(t *testing.T) {
 	g.waitForCity(t)
 	assertLocation(t, visitFromIP(t, g, "81.2.69.142"), "GB", "England")
 }
+
+// day is a day, for the City database's age.
+const day = 24 * time.Hour
+
+func TestANewMonthsReleaseIsUsedWithoutARestartAndTheOldCopyDeleted(t *testing.T) {
+	t.Parallel()
+	databases := newDatabaseServer(t)
+	databases.release(t, "2026-03", geoLite2City)
+	databases.release(t, "2026-04", geoIP2City)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForCity(t)
+	// 214.78.0.1 is only in March's release, and 214.0.1.1 only in April's.
+	assertLocation(t, visitFromIP(t, g, "214.78.0.1"), "US", "California")
+	assertLocation(t, visitFromIP(t, g, "214.0.1.1"), "", "")
+	// From 2026-03-01 to the clock's start, 2026-03-10 15:00.
+	if got, want := g.metric(t, cityAge), (9*day + 15*time.Hour).Seconds(); got != want {
+		t.Errorf("%s = %v, want %v", cityAge, got, want)
+	}
+
+	g.clock.set(time.Date(2026, time.April, 2, 9, 0, 0, 0, time.UTC))
+	visitFromIP(t, g, "214.0.1.1")
+	g.waitForMetric(t, cityAge, (day + 9*time.Hour).Seconds())
+
+	assertLocation(t, visitFromIP(t, g, "214.0.1.1"), "AU", "Victoria")
+	assertLocation(t, visitFromIP(t, g, "214.78.0.1"), "", "")
+	if n := g.copiesOf(t, geoLite2City); n != 0 {
+		t.Errorf("with April's release loaded, the work directory has %d copies of March's, want 0", n)
+	}
+	if n := g.copiesOf(t, geoIP2City); n != 1 {
+		t.Errorf("with April's release loaded, the work directory has %d copies of it, want 1", n)
+	}
+	if warnings := g.statsWarnings(); len(warnings) != 0 {
+		t.Errorf("got %d warnings, want none:\n%s", len(warnings), strings.Join(warnings, "\n"))
+	}
+}
+
+func TestUntilThisMonthsReleaseIsOutLastMonthsIsUsed(t *testing.T) {
+	t.Parallel()
+	databases := newDatabaseServer(t)
+	databases.release(t, "2026-02", geoLite2City)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForCity(t)
+
+	assertLocation(t, visitFromIP(t, g, "81.2.69.142"), "GB", "England")
+	// From 2026-02-01 to the clock's start, 2026-03-10 15:00.
+	if got, want := g.metric(t, cityAge), (37*day + 15*time.Hour).Seconds(); got != want {
+		t.Errorf("%s = %v, want %v", cityAge, got, want)
+	}
+
+	// goblog tries again for March's an hour later.
+	databases.release(t, "2026-03", geoIP2City)
+	g.clock.advance(time.Hour)
+	visitFromIP(t, g, "214.0.1.1")
+	g.waitForMetric(t, cityAge, (9*day + 16*time.Hour).Seconds())
+	assertLocation(t, visitFromIP(t, g, "214.0.1.1"), "AU", "Victoria")
+	if n := g.copiesOf(t, geoLite2City); n != 0 {
+		t.Errorf("with March's release loaded, the work directory has %d copies of February's, want 0", n)
+	}
+	// A release that isn't out yet isn't a problem.
+	if warnings := g.statsWarnings(); len(warnings) != 0 {
+		t.Errorf("got %d warnings, want none:\n%s", len(warnings), strings.Join(warnings, "\n"))
+	}
+}
+
+func TestAFailedRefreshKeepsThePreviousCopyInUse(t *testing.T) {
+	t.Parallel()
+	databases := newDatabaseServer(t)
+	databases.release(t, "2026-03", geoLite2City)
+	databases.release(t, "2026-04", geoIP2City)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForCity(t)
+
+	databases.setFailing(true)
+	g.clock.set(time.Date(2026, time.April, 2, 9, 0, 0, 0, time.UTC))
+	visitFromIP(t, g, "214.78.0.1")
+	g.waitForWarnings(t, 1)
+
+	assertLocation(t, visitFromIP(t, g, "214.78.0.1"), "US", "California")
+	if got := g.metric(t, cityLoaded); got != 1 {
+		t.Errorf("%s = %v, want 1", cityLoaded, got)
+	}
+	// March's release, from 2026-03-01 to 2026-04-02 09:00.
+	if got, want := g.metric(t, cityAge), (32*day + 9*time.Hour).Seconds(); got != want {
+		t.Errorf("%s = %v, want %v", cityAge, got, want)
+	}
+	if n := g.copiesOf(t, geoLite2City); n != 1 {
+		t.Errorf("the work directory has %d copies of March's release, want 1", n)
+	}
+}

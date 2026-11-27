@@ -7,6 +7,7 @@ package app_test
 import (
 	"bytes"
 	"compress/gzip"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,9 @@ import (
 const (
 	// geoLite2City is MaxMind's GeoLite2 City test database.
 	geoLite2City = "GeoLite2-City-Test.mmdb"
+	// geoIP2City is MaxMind's GeoIP2 City test database. Its data differs
+	// from geoLite2City's, so it can stand in for the next month's release.
+	geoIP2City = "GeoIP2-City-Test.mmdb"
 )
 
 // testDatabase is the test database file's contents.
@@ -67,6 +71,15 @@ func (s *databaseServer) urlTemplate() string {
 // env is startGoblog's env for downloading from this server.
 func (s *databaseServer) env() map[string]string {
 	return map[string]string{"GOBLOG_STATS_CITY_DB_URL": s.urlTemplate()}
+}
+
+// release publishes the test database file as month's release ("2026-03").
+func (s *databaseServer) release(t *testing.T, month, file string) {
+	t.Helper()
+	gz := gzipped(t, testDatabase(t, file))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releases[month] = gz
 }
 
 // releaseEveryMonth publishes the test database file as every month's
@@ -161,6 +174,9 @@ func (g *goblog) waitForMetric(t *testing.T, sample string, want float64) {
 // cityLoaded is the sample saying whether the City database is loaded.
 const cityLoaded = `goblog_stats_database_loaded{database="city"}`
 
+// cityAge is the sample saying how old the loaded City database is.
+const cityAge = `goblog_stats_database_age_seconds{database="city"}`
+
 // waitForCity waits until goblog has loaded a City database.
 func (g *goblog) waitForCity(t *testing.T) {
 	t.Helper()
@@ -179,4 +195,25 @@ func (g *goblog) waitForWarnings(t *testing.T, n int) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// copiesOf counts the files in goblog's work directory that are copies of
+// the test database file.
+func (g *goblog) copiesOf(t *testing.T, file string) int {
+	t.Helper()
+	want := testDatabase(t, file)
+	n := 0
+	err := filepath.WalkDir(g.workDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if b, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(b, want) {
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the work directory: %v", err)
+	}
+	return n
 }
