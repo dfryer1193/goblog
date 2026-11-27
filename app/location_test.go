@@ -119,7 +119,7 @@ func TestWithTheDownloadFailingLinesOmitLocationWithAWarning(t *testing.T) {
 	if warnings := g.statsWarnings(); len(warnings) != 1 {
 		t.Errorf("got %d warnings, want 1:\n%s", len(warnings), strings.Join(warnings, "\n"))
 	}
-	if strings.Contains(g.metricsBody(t), "goblog_stats_database_age_seconds") {
+	if strings.Contains(g.metricsBody(t), cityAge) {
 		t.Errorf("without a City database, there's an age metric:\n%s", g.metricsBody(t))
 	}
 

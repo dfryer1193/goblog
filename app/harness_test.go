@@ -254,8 +254,9 @@ type goblog struct {
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
 // GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
-// directory, GOBLOG_WEBHOOK_SECRET webhookSecret and GOBLOG_STATS_CITY_DB_URL
-// a databaseServer releasing geoLite2City every month. The clock starts at
+// directory, GOBLOG_WEBHOOK_SECRET webhookSecret, GOBLOG_STATS_CITY_DB_URL
+// a databaseServer releasing geoLite2City every month and
+// GOBLOG_STATS_ASN_DB_URL one releasing geoLite2ASN. The clock starts at
 // startTime. goblog hasn't synced yet: call sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
@@ -275,10 +276,15 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
 		"GOBLOG_STATS_SALT_FILE": saltFile,
 	}
-	if _, ok := env["GOBLOG_STATS_CITY_DB_URL"]; !ok {
+	if _, ok := env[cityEnv]; !ok {
 		databases := newDatabaseServer(t)
 		databases.releaseEveryMonth(t, geoLite2City)
-		vars["GOBLOG_STATS_CITY_DB_URL"] = databases.urlTemplate()
+		maps.Copy(vars, databases.env())
+	}
+	if _, ok := env[asnEnv]; !ok {
+		databases := newASNDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2ASN)
+		maps.Copy(vars, databases.env())
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {

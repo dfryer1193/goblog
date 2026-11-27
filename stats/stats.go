@@ -66,13 +66,17 @@ type Config struct {
 	// Without a url, or with a nil SiteURL, the host a request was sent to
 	// is the site's host.
 	SiteURL func() string
-	// DatabaseDir is the directory the location database is downloaded
-	// into.
+	// DatabaseDir is the directory the location and network databases are
+	// downloaded into.
 	DatabaseDir string
 	// CityDatabaseURL is the City database's URL template, such as
 	// DefaultCityDatabaseURL, with {YYYY} and {MM} for the release's year
 	// and month. Empty means no location.
 	CityDatabaseURL string
+	// ASNDatabaseURL is the ASN database's URL template, such as
+	// DefaultASNDatabaseURL, with {YYYY} and {MM} as in CityDatabaseURL.
+	// Empty means no network.
+	ASNDatabaseURL string
 }
 
 // Stats is Site Statistics, built by New.
@@ -86,6 +90,8 @@ type Stats struct {
 	salt     *salt
 	// city is the City database, or nil for no location.
 	city *database
+	// asn is the ASN database, or nil for no network.
+	asn *database
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
 	// crawlers recognises Bots by the crawler list.
@@ -183,6 +189,16 @@ func New(cfg Config) (*Stats, error) {
 		})
 		s.registry.MustRegister(newDatabaseCollector(s.city))
 	}
+	if cfg.ASNDatabaseURL != "" {
+		s.asn = newDatabase(databaseConfig{
+			Name:        asnDatabase,
+			URLTemplate: cfg.ASNDatabaseURL,
+			Dir:         cfg.DatabaseDir,
+			Now:         s.now,
+			Logger:      logger,
+		})
+		s.registry.MustRegister(newDatabaseCollector(s.asn))
+	}
 	return s, nil
 }
 
@@ -194,8 +210,10 @@ func (s *Stats) MetricsHandler() http.Handler {
 
 // Close stops Site Statistics' downloads, and waits for them to stop.
 func (s *Stats) Close() {
-	if s.city != nil {
-		s.city.close()
+	for _, db := range []*database{s.city, s.asn} {
+		if db != nil {
+			db.close()
+		}
 	}
 }
 
@@ -217,8 +235,10 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // status. Each request is in one class, checked in order: Excluded first,
 // ahead of every other class.
 func (s *Stats) record(r *http.Request, status int) {
-	if s.city != nil {
-		s.city.refresh()
+	for _, db := range []*database{s.city, s.asn} {
+		if db != nil {
+			db.refresh()
+		}
 	}
 	// Excluded: a request from an excluded network emits nothing at all,
 	// neither a line nor a metric.
@@ -231,7 +251,11 @@ func (s *Stats) record(r *http.Request, status int) {
 	}
 	if bot, ok := s.bot(r.UserAgent()); ok {
 		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
-		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
+		asNet := networkOf(s.asn, clientIP(r))
+		s.emit(line{
+			Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot,
+			ASN: asNet.asn, ASOrg: asNet.org,
+		})
 		return
 	}
 	switch {

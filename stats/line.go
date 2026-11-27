@@ -35,6 +35,12 @@ type line struct {
 	Kind string `json:"kind"`
 	// Bot is a Bot request's Bot name, or botUnknown.
 	Bot string `json:"bot,omitempty"`
+	// ASN is a Bot request's network's AS number. It's omitted without the
+	// network database, or if it doesn't know the client IP.
+	ASN uint32 `json:"asn,omitempty"`
+	// ASOrg is the organisation owning a Bot request's network. It's
+	// omitted as ASN is, or if the database has no organisation for it.
+	ASOrg string `json:"as_org,omitempty"`
 	// Reader is a feed fetch's feed reader.
 	Reader string `json:"reader,omitempty"`
 	// Subscribers is the subscriber count a feed fetch's feed reader
