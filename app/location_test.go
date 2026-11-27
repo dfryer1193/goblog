@@ -227,3 +227,28 @@ func TestAFailedRefreshKeepsThePreviousCopyInUse(t *testing.T) {
 		t.Errorf("the work directory has %d copies of March's release, want 1", n)
 	}
 }
+
+func TestVisitor404sSayTheVisitorsCountryAndRegionAndBotsDont(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	g.waitForCity(t)
+
+	for userAgent, class := range map[string]string{firefox: "not_found", "curl/8.5.0": "bot"} {
+		before := len(g.stats.lines())
+		resp := g.request(t, http.MethodGet, "/posts/gone/", http.Header{
+			"User-Agent":      {userAgent},
+			"X-Forwarded-For": {"81.2.69.142"},
+		})
+		assertStatus(t, "/posts/gone/", resp, http.StatusNotFound)
+		line := g.statsLines(t, before+1)[before]
+		if line["class"] != class {
+			t.Fatalf("class = %v, want %s; line: %v", line["class"], class, line)
+		}
+		if class == "bot" {
+			assertLocation(t, line, "", "")
+		} else {
+			assertLocation(t, line, "GB", "England")
+		}
+	}
+}
