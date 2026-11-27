@@ -8,6 +8,7 @@ package stats
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -39,6 +40,8 @@ type Config struct {
 	// SaltFile is the path of the daily salt for Visitor IDs. Empty means
 	// there's no salt, and so no Visitor IDs.
 	SaltFile string
+	// Logger receives Site Statistics' warnings. Nil means slog's default.
+	Logger *slog.Logger
 }
 
 // Stats is Site Statistics, built by New.
@@ -69,8 +72,16 @@ func New(cfg Config) *Stats {
 		output = os.Stdout
 	}
 	s.lines = newEmitter(output)
-	s.salt = newSalt(cfg.SaltFile, s.now)
 	s.registry = prometheus.NewRegistry()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	saltLoaded := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "goblog_stats_salt_loaded",
+		Help: "Whether a salt for Visitor IDs is loaded: 1 if so, 0 if Page Views have no Visitor ID.",
+	})
+	s.salt = newSalt(cfg.SaltFile, s.now, logger, saltLoaded)
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
 		Help: "Page Views, by kind of page.",
@@ -79,7 +90,7 @@ func New(cfg Config) *Stats {
 		Name: "goblog_other_requests_total",
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
-	s.registry.MustRegister(s.pageViews, s.others)
+	s.registry.MustRegister(s.pageViews, s.others, saltLoaded)
 	return s
 }
 

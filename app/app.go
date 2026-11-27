@@ -120,6 +120,10 @@ type Config struct {
 	// StatsOutput receives the Site Statistics JSON lines. Nil means
 	// stdout. It isn't read from the environment; tests set it.
 	StatsOutput io.Writer
+	// StatsLog receives what Site Statistics log, such as a warning that
+	// there's no salt. Nil means goblog's ordinary logs. It isn't read from
+	// the environment; tests set it.
+	StatsLog io.Writer
 }
 
 // ConfigFromEnv reads Config from the environment through lookup, which has
@@ -190,7 +194,12 @@ func New(cfg Config) (*App, error) {
 		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
+	statsLogger := log.GetLogger("stats")
+	if cfg.StatsLog != nil {
+		statsLogger = log.GetLoggerTo("stats", cfg.StatsLog)
+	}
 	siteStats := stats.New(stats.Config{
+		Logger:   statsLogger,
 		Settings: cfg.StatsConfig,
 		Now:      cfg.Now,
 		Output:   cfg.StatsOutput,

@@ -170,7 +170,8 @@ func (c *testClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// statsOutput captures the Site Statistics JSON lines goblog writes.
+// statsOutput captures the Site Statistics JSON lines goblog writes, or what
+// Site Statistics log.
 type statsOutput struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -230,6 +231,8 @@ type goblog struct {
 	// saltFile is the salt file's path (GOBLOG_STATS_SALT_FILE), which
 	// startGoblog writes testSalt to.
 	saltFile string
+	// statsLog captures what Site Statistics log.
+	statsLog *statsOutput
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
@@ -272,6 +275,8 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	}
 	statsConfig := &fakeStatsConfig{}
 	cfg.StatsConfig = statsConfig
+	statsLog := &statsOutput{}
+	cfg.StatsLog = statsLog
 
 	a, err := app.New(cfg)
 	if err != nil {
@@ -290,6 +295,7 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		statsConfig: statsConfig,
 		metrics:     metrics,
 		saltFile:    cfg.StatsSaltFile,
+		statsLog:    statsLog,
 	}
 }
 
@@ -298,6 +304,26 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 func (g *goblog) writeSalt(t *testing.T, salt string) {
 	t.Helper()
 	writeFile(t, g.saltFile, salt)
+}
+
+// removeSalt deletes the salt file.
+func (g *goblog) removeSalt(t *testing.T) {
+	t.Helper()
+	if err := os.Remove(g.saltFile); err != nil {
+		t.Fatalf("removing the salt file: %v", err)
+	}
+}
+
+// statsWarnings are the warnings Site Statistics have logged so far.
+func (g *goblog) statsWarnings() []string {
+	var warnings []string
+	for _, line := range g.statsLog.lines() {
+		// Each record is logged as text and as JSON; count the text.
+		if strings.Contains(line, " level=WARN ") {
+			warnings = append(warnings, line)
+		}
+	}
+	return warnings
 }
 
 // testSalt is the salt startGoblog writes to the salt file: 32 bytes.
