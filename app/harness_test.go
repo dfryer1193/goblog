@@ -238,8 +238,9 @@ type goblog struct {
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
 // GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
-// directory and GOBLOG_WEBHOOK_SECRET webhookSecret. The clock starts at startTime. goblog hasn't synced yet: call
-// sync.
+// directory, GOBLOG_WEBHOOK_SECRET webhookSecret and GOBLOG_STATS_CITY_DB_URL
+// a databaseServer releasing geoLite2City every month. The clock starts at
+// startTime. goblog hasn't synced yet: call sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
 	return startGoblogWritingStatsTo(t, repo, env, nil)
@@ -257,6 +258,11 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		"GOBLOG_WORK_DIR":        workDir,
 		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
 		"GOBLOG_STATS_SALT_FILE": saltFile,
+	}
+	if _, ok := env["GOBLOG_STATS_CITY_DB_URL"]; !ok {
+		databases := newDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2City)
+		vars["GOBLOG_STATS_CITY_DB_URL"] = databases.urlTemplate()
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -282,6 +288,7 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
+	t.Cleanup(a.Close)
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
 	metrics := httptest.NewServer(a.MetricsHandler())

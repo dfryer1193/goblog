@@ -58,6 +58,10 @@ const (
 	// Visitor IDs (see the README for its contract). Optional; without it,
 	// Page Views have no Visitor ID.
 	EnvStatsSaltFile = "GOBLOG_STATS_SALT_FILE"
+	// EnvStatsCityDBURL is the URL template of the location database's
+	// monthly release, with {YYYY} and {MM} for its year and month.
+	// Default: DB-IP's City Lite. A gzipped database is gunzipped.
+	EnvStatsCityDBURL = "GOBLOG_STATS_CITY_DB_URL"
 )
 
 // syncTimeout bounds each background sync, so a hung fetch can't hold up
@@ -84,6 +88,8 @@ const sshUser = "git"
 const (
 	contentSubdir = "content"
 	outputSubdir  = "output"
+	// databasesSubdir holds Site Statistics' downloaded databases.
+	databasesSubdir = "databases"
 )
 
 // Config is serve mode's runtime configuration.
@@ -111,6 +117,8 @@ type Config struct {
 	// StatsSaltFile is the path of the daily salt for Visitor IDs, or empty
 	// for none.
 	StatsSaltFile string
+	// StatsCityDatabaseURL is the location database's URL template.
+	StatsCityDatabaseURL string
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
@@ -145,6 +153,8 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		MetricsPort:   get(EnvMetricsPort, defaultMetricsPort),
 		WebhookSecret: get(EnvWebhookSecret, ""),
 		StatsSaltFile: get(EnvStatsSaltFile, ""),
+
+		StatsCityDatabaseURL: get(EnvStatsCityDBURL, stats.DefaultCityDatabaseURL),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
@@ -163,6 +173,7 @@ type App struct {
 	publisher *service.Publisher
 	router    *router.Router
 	metrics   http.Handler
+	stats     *stats.Stats
 	logger    *slog.Logger
 	// pollInterval is how often Run polls.
 	pollInterval time.Duration
@@ -205,10 +216,14 @@ func New(cfg Config) (*App, error) {
 		SiteURL:  publisher.SiteURL,
 		SaltFile: cfg.StatsSaltFile,
 		Logger:   statsLogger,
+
+		DatabaseDir:     filepath.Join(cfg.WorkDir, databasesSubdir),
+		CityDatabaseURL: cfg.StatsCityDatabaseURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
 	}
+	a.stats = siteStats
 	metrics := http.NewServeMux()
 	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
 	a.metrics = metrics
@@ -233,6 +248,12 @@ func (a *App) Router() *router.Router {
 // metrics port. It's never on the Router.
 func (a *App) MetricsHandler() http.Handler {
 	return a.metrics
+}
+
+// Close stops serve mode's background work that isn't Run's, such as Site
+// Statistics' downloads, and waits for it to stop.
+func (a *App) Close() {
+	a.stats.Close()
 }
 
 // Sync is the "sync now" operation: fetch the Content Repository's latest

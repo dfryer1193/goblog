@@ -50,6 +50,13 @@ type Config struct {
 	// Without a url, or with a nil SiteURL, the host a request was sent to
 	// is the site's host.
 	SiteURL func() string
+	// DatabaseDir is the directory the location database is downloaded
+	// into.
+	DatabaseDir string
+	// CityDatabaseURL is the City database's URL template, such as
+	// DefaultCityDatabaseURL, with {YYYY} and {MM} for the release's year
+	// and month. Empty means no location.
+	CityDatabaseURL string
 }
 
 // Stats is Site Statistics, built by New.
@@ -60,6 +67,8 @@ type Stats struct {
 	sources  sourceList
 	lines    *emitter
 	salt     *salt
+	// city is the City database, or nil for no location.
+	city *database
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
 	registry   *prometheus.Registry
@@ -109,6 +118,16 @@ func New(cfg Config) (*Stats, error) {
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
 	s.registry.MustRegister(s.pageViews, s.others, saltLoaded)
+	if cfg.CityDatabaseURL != "" {
+		s.city = newDatabase(databaseConfig{
+			Name:        cityDatabase,
+			URLTemplate: cfg.CityDatabaseURL,
+			Dir:         cfg.DatabaseDir,
+			Now:         s.now,
+			Logger:      logger,
+		})
+		s.registry.MustRegister(newDatabaseCollector(s.city))
+	}
 	return s, nil
 }
 
@@ -116,6 +135,13 @@ func New(cfg Config) (*Stats, error) {
 // its own port, never on the site's router.
 func (s *Stats) MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{})
+}
+
+// Close stops Site Statistics' downloads, and waits for them to stop.
+func (s *Stats) Close() {
+	if s.city != nil {
+		s.city.close()
+	}
 }
 
 // Wrap returns next with Site Statistics around it: every request next
@@ -135,12 +161,17 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // record emits what Site Statistics learn from a request answered with
 // status.
 func (s *Stats) record(r *http.Request, status int) {
+	if s.city != nil {
+		s.city.refresh()
+	}
 	kind := kindOf(r.URL.Path, status)
 	if !isPageView(r, kind, status) {
 		s.others.WithLabelValues(kind).Inc()
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
+	ip := clientIP(r)
+	loc := locationOf(s.city, ip)
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
 		Time:         s.now().UTC(),
@@ -152,9 +183,11 @@ func (s *Stats) record(r *http.Request, status int) {
 		BrowserMajor: f.browserMajor,
 		OS:           f.os,
 		Device:       f.device,
+		Country:      loc.country,
+		Region:       loc.region,
 	}
 	if key := s.salt.current(); key != nil {
-		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
+		l.VisitorID = visitorIDFor(key, ip, r.UserAgent())
 	}
 	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
 }
