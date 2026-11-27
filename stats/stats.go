@@ -7,13 +7,17 @@ package stats
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
+	useragent "github.com/medama-io/go-useragent"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -46,14 +50,31 @@ type Config struct {
 	Now func() time.Time
 	// Output receives the JSON lines. Nil means os.Stdout.
 	Output io.Writer
+	// SaltFile is the path of the daily salt for Visitor IDs. Empty means
+	// there's no salt, and so no Visitor IDs.
+	SaltFile string
+	// Logger receives Site Statistics' warnings. Nil means slog's default.
+	Logger *slog.Logger
+	// SiteURL is the current site's base URL, from site.yaml's url, or ""
+	// if it has none. A referrer from its host is internal navigation.
+	// Without a url, or with a nil SiteURL, the host a request was sent to
+	// is the site's host.
+	SiteURL func() string
 }
 
 // Stats is Site Statistics, built by New.
 type Stats struct {
 	settings Settings
 	now      func() time.Time
+	siteURL  func() string
+	sources  sourceList
 	lines    *emitter
+	salt     *salt
+	// userAgents parses User-Agents into families.
+	userAgents *useragent.Parser
+	// crawlers recognises Bots by the crawler list.
 	crawlers *crawlers
+	// readers recognises feed readers.
 	readers  *feedReaders
 	registry *prometheus.Registry
 	// pageViews counts Page Views by kind of page.
@@ -72,8 +93,12 @@ type Stats struct {
 }
 
 // New builds Site Statistics from cfg.
-func New(cfg Config) *Stats {
-	s := &Stats{settings: cfg.Settings, now: cfg.Now}
+func New(cfg Config) (*Stats, error) {
+	sources, err := loadSourceList()
+	if err != nil {
+		return nil, fmt.Errorf("loading the search-engine and social list: %w", err)
+	}
+	s := &Stats{settings: cfg.Settings, now: cfg.Now, siteURL: cfg.SiteURL, sources: sources}
 	if s.settings == nil {
 		s.settings = Defaults()
 	}
@@ -86,13 +111,23 @@ func New(cfg Config) *Stats {
 	}
 	crawlers, err := parsedCrawlers()
 	if err != nil {
-		// The list is embedded, so this is goblog's bug, caught by any test.
-		panic(err)
+		return nil, fmt.Errorf("loading the crawler list: %w", err)
 	}
 	s.crawlers = crawlers
 	s.readers = newFeedReaders(crawlers)
 	s.lines = newEmitter(output)
+	// Built here, in serve mode only: it takes a few milliseconds and MiB.
+	s.userAgents = useragent.NewParser()
 	s.registry = prometheus.NewRegistry()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	saltLoaded := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "goblog_stats_salt_loaded",
+		Help: "Whether a salt for Visitor IDs is loaded: 1 if so, 0 if Page Views have no Visitor ID.",
+	})
+	s.salt = newSalt(cfg.SaltFile, s.now, logger, saltLoaded)
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
 		Help: "Page Views, by kind of page.",
@@ -113,8 +148,8 @@ func New(cfg Config) *Stats {
 		Name: "goblog_feed_subscribers",
 		Help: "The subscriber count each feed reader last reported in its User-Agent.",
 	}, []string{labelReader})
-	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers, s.others)
-	return s
+	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers, s.others, saltLoaded)
+	return s, nil
 }
 
 // MetricsHandler serves Site Statistics' Prometheus metrics. It belongs on
@@ -156,7 +191,34 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	s.pageViews.WithLabelValues(kind).Inc()
-	s.emit(line{Time: s.now().UTC(), Class: classPageView, Path: r.URL.Path, Status: status, Kind: kind})
+	f := familiesOf(s.userAgents, r.UserAgent())
+	l := line{
+		Time:         s.now().UTC(),
+		Class:        classPageView,
+		Path:         r.URL.Path,
+		Status:       status,
+		Kind:         kind,
+		Browser:      f.browser,
+		BrowserMajor: f.browserMajor,
+		OS:           f.os,
+		Device:       f.device,
+	}
+	if key := s.salt.current(); key != nil {
+		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
+	}
+	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
+}
+
+// siteHost is the current site's host, from its url, or "" if it has none.
+func (s *Stats) siteHost() string {
+	if s.siteURL == nil {
+		return ""
+	}
+	u, err := url.Parse(s.siteURL())
+	if err != nil {
+		return ""
+	}
+	return hostOf(u.Host)
 }
 
 // recordFeedFetch emits r, a request for the feed answered with status, as

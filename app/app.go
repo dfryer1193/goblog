@@ -54,6 +54,10 @@ const (
 	// new commit and the date for a rollover, as a Go duration such as
 	// "1m" or "30s". Default: 1m.
 	EnvPollInterval = "GOBLOG_POLL_INTERVAL"
+	// EnvStatsSaltFile is the path of the daily salt for Site Statistics'
+	// Visitor IDs (see the README for its contract). Optional; without it,
+	// Page Views have no Visitor ID.
+	EnvStatsSaltFile = "GOBLOG_STATS_SALT_FILE"
 )
 
 // syncTimeout bounds each background sync, so a hung fetch can't hold up
@@ -104,6 +108,9 @@ type Config struct {
 	WebhookSecret string
 	// PollInterval is how often Run polls.
 	PollInterval time.Duration
+	// StatsSaltFile is the path of the daily salt for Visitor IDs, or empty
+	// for none.
+	StatsSaltFile string
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
@@ -113,6 +120,10 @@ type Config struct {
 	// StatsOutput receives the Site Statistics JSON lines. Nil means
 	// stdout. It isn't read from the environment; tests set it.
 	StatsOutput io.Writer
+	// StatsLog receives what Site Statistics log, such as a warning that
+	// there's no salt. Nil means goblog's ordinary logs. It isn't read from
+	// the environment; tests set it.
+	StatsLog io.Writer
 }
 
 // ConfigFromEnv reads Config from the environment through lookup, which has
@@ -133,6 +144,7 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		Port:          get(EnvPort, defaultPort),
 		MetricsPort:   get(EnvMetricsPort, defaultMetricsPort),
 		WebhookSecret: get(EnvWebhookSecret, ""),
+		StatsSaltFile: get(EnvStatsSaltFile, ""),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
@@ -182,7 +194,21 @@ func New(cfg Config) (*App, error) {
 		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
-	siteStats := stats.New(stats.Config{Settings: cfg.StatsConfig, Now: cfg.Now, Output: cfg.StatsOutput})
+	statsLogger := log.GetLogger("stats")
+	if cfg.StatsLog != nil {
+		statsLogger = log.GetLoggerTo("stats", cfg.StatsLog)
+	}
+	siteStats, err := stats.New(stats.Config{
+		Settings: cfg.StatsConfig,
+		Now:      cfg.Now,
+		Output:   cfg.StatsOutput,
+		SiteURL:  publisher.SiteURL,
+		SaltFile: cfg.StatsSaltFile,
+		Logger:   statsLogger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
+	}
 	metrics := http.NewServeMux()
 	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
 	a.metrics = metrics

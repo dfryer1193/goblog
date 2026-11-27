@@ -239,3 +239,129 @@ func TestAStalledOutputDoesntDelayRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestAPageViewLineHasTheBrowserOSAndDeviceFamilies(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, userAgent                   string
+		browser, browserMajor, os, device string
+	}{
+		{
+			"Chrome on Windows",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+			"Chrome", "142", "Windows", "desktop",
+		},
+		{
+			"Edge on Windows",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
+			"Edge", "142", "Windows", "desktop",
+		},
+		{
+			"Firefox on Linux",
+			"Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0",
+			"Firefox", "145", "Linux", "desktop",
+		},
+		{
+			"Safari on macOS",
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15",
+			"Safari", "26", "macOS", "desktop",
+		},
+		{
+			"Safari on an iPhone",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
+			"Safari", "26", "iOS", "mobile",
+		},
+		{
+			"Chrome on an iPhone",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/142.0.7444.77 Mobile/15E148 Safari/604.1",
+			"Chrome", "142", "iOS", "mobile",
+		},
+		{
+			"Chrome on an Android phone",
+			"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+			"Chrome", "142", "Android", "mobile",
+		},
+		{
+			"Firefox on an Android phone",
+			"Mozilla/5.0 (Android 15; Mobile; rv:145.0) Gecko/145.0 Firefox/145.0",
+			"Firefox", "145", "Android", "mobile",
+		},
+		{
+			"Safari on an iPad",
+			"Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
+			"Safari", "26", "iOS", "tablet",
+		},
+		{
+			"Chrome on an Android tablet",
+			"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+			"Chrome", "142", "Android", "tablet",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := startGoblog(t, statsSite(t), nil)
+			g.sync(t)
+
+			g.request(t, http.MethodGet, "/posts/hello/", http.Header{"User-Agent": {tc.userAgent}})
+
+			line := g.statsLines(t, 1)[0]
+			assertPageView(t, line, "/posts/hello/", "post")
+			for field, want := range map[string]any{
+				"browser": tc.browser, "browser_major": tc.browserMajor, "os": tc.os, "device": tc.device,
+			} {
+				if line[field] != want {
+					t.Errorf("%s = %v, want %v; line: %v", field, line[field], want, line)
+				}
+			}
+		})
+	}
+}
+
+func TestAnUnrecognisedUserAgentsPageViewHasOtherAndUnknownFamilies(t *testing.T) {
+	t.Parallel()
+	for _, userAgent := range []string{
+		"totally unknown thing",
+		"Mozilla/5.0 (Hurd; GNU) Wobble/7.3.1",
+	} {
+		t.Run(userAgent, func(t *testing.T) {
+			t.Parallel()
+			g := startGoblog(t, statsSite(t), nil)
+			g.sync(t)
+
+			g.request(t, http.MethodGet, "/posts/hello/", http.Header{"User-Agent": {userAgent}})
+
+			line := g.statsLines(t, 1)[0]
+			assertPageView(t, line, "/posts/hello/", "post")
+			for field, want := range map[string]any{
+				"browser": "other", "browser_major": nil, "os": "other", "device": "unknown",
+			} {
+				if line[field] != want {
+					t.Errorf("%s = %v, want %v; line: %v", field, line[field], want, line)
+				}
+			}
+		})
+	}
+}
+
+func TestAPageViewLineHasNoRawUserAgentOrFullVersion(t *testing.T) {
+	t.Parallel()
+	const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 " +
+		"(KHTML, like Gecko) CriOS/142.0.7444.77 Mobile/15E148 Safari/604.1"
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+
+	g.request(t, http.MethodGet, "/posts/hello/", http.Header{"User-Agent": {userAgent}})
+
+	line := g.statsLines(t, 1)[0]
+	for field, value := range line {
+		s, ok := value.(string)
+		if !ok {
+			continue
+		}
+		for _, leak := range []string{userAgent, "CriOS", "142.0", "7444", "18_6", "15E148"} {
+			if strings.Contains(s, leak) {
+				t.Errorf("%s = %q, which contains %q from the User-Agent", field, s, leak)
+			}
+		}
+	}
+}

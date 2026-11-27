@@ -170,7 +170,8 @@ func (c *testClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// statsOutput captures the Site Statistics JSON lines goblog writes.
+// statsOutput captures the Site Statistics JSON lines goblog writes, or what
+// Site Statistics log.
 type statsOutput struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -227,6 +228,11 @@ type goblog struct {
 	statsConfig *fakeStatsConfig
 	// metrics serves goblog's metrics handler, as its metrics port does.
 	metrics *httptest.Server
+	// saltFile is the salt file's path (GOBLOG_STATS_SALT_FILE), which
+	// startGoblog writes testSalt to.
+	saltFile string
+	// statsLog captures what Site Statistics log.
+	statsLog *statsOutput
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
@@ -244,10 +250,13 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]string, output io.Writer) *goblog {
 	t.Helper()
 	workDir := t.TempDir()
+	saltFile := filepath.Join(t.TempDir(), "salt")
+	writeFile(t, saltFile, testSalt)
 	vars := map[string]string{
-		"GOBLOG_CONTENT_URL":    repo.url(),
-		"GOBLOG_WORK_DIR":       workDir,
-		"GOBLOG_WEBHOOK_SECRET": webhookSecret,
+		"GOBLOG_CONTENT_URL":     repo.url(),
+		"GOBLOG_WORK_DIR":        workDir,
+		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
+		"GOBLOG_STATS_SALT_FILE": saltFile,
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -266,6 +275,8 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	}
 	statsConfig := &fakeStatsConfig{}
 	cfg.StatsConfig = statsConfig
+	statsLog := &statsOutput{}
+	cfg.StatsLog = statsLog
 
 	a, err := app.New(cfg)
 	if err != nil {
@@ -283,6 +294,46 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		stats:       captured,
 		statsConfig: statsConfig,
 		metrics:     metrics,
+		saltFile:    cfg.StatsSaltFile,
+		statsLog:    statsLog,
+	}
+}
+
+// writeSalt replaces the salt file's contents with salt, as the daily
+// rotation does.
+func (g *goblog) writeSalt(t *testing.T, salt string) {
+	t.Helper()
+	writeFile(t, g.saltFile, salt)
+}
+
+// removeSalt deletes the salt file.
+func (g *goblog) removeSalt(t *testing.T) {
+	t.Helper()
+	if err := os.Remove(g.saltFile); err != nil {
+		t.Fatalf("removing the salt file: %v", err)
+	}
+}
+
+// statsWarnings are the warnings Site Statistics have logged so far.
+func (g *goblog) statsWarnings() []string {
+	var warnings []string
+	for _, line := range g.statsLog.lines() {
+		// Each record is logged as text and as JSON; count the text.
+		if strings.Contains(line, " level=WARN ") {
+			warnings = append(warnings, line)
+		}
+	}
+	return warnings
+}
+
+// testSalt is the salt startGoblog writes to the salt file: 32 bytes.
+const testSalt = "test-salt-0123456789abcdefghijkl"
+
+// writeFile writes content to path, replacing it.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }
 
