@@ -194,3 +194,34 @@ func TestWithoutASaltFileSetPageViewsHaveNoVisitorID(t *testing.T) {
 			len(warnings), strings.Join(warnings, "\n"))
 	}
 }
+
+func TestNoLineOrLogContainsTheClientIPOrTheSalt(t *testing.T) {
+	t.Parallel()
+	const ip, nextSalt = "203.0.113.7", "the-next-days-salt-0123456789abc"
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+
+	visitFrom(t, g, ip, firefox)
+	g.writeSalt(t, nextSalt)
+	g.clock.advance(5 * time.Second)
+	visitFrom(t, g, ip, firefox)
+	g.writeSalt(t, nextSalt[:10])
+	g.clock.advance(5 * time.Second)
+	visitFrom(t, g, ip, firefox)
+	g.removeSalt(t)
+	g.clock.advance(5 * time.Second)
+	visitFrom(t, g, ip, firefox)
+	g.writeSalt(t, testSalt)
+	g.clock.advance(5 * time.Second)
+	visitFrom(t, g, ip, firefox)
+
+	for name, lines := range map[string][]string{"line": g.stats.lines(), "log": g.statsLog.lines()} {
+		for _, line := range lines {
+			for _, secret := range []string{ip, testSalt, nextSalt, nextSalt[:10]} {
+				if strings.Contains(line, secret) {
+					t.Errorf("a Site Statistics %s contains %q:\n%s", name, secret, line)
+				}
+			}
+		}
+	}
+}
