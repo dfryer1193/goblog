@@ -64,6 +64,11 @@ func (s *databaseServer) urlTemplate() string {
 	return s.srv.URL + "/city-{YYYY}-{MM}.mmdb.gz"
 }
 
+// env is startGoblog's env for downloading from this server.
+func (s *databaseServer) env() map[string]string {
+	return map[string]string{"GOBLOG_STATS_CITY_DB_URL": s.urlTemplate()}
+}
+
 // releaseEveryMonth publishes the test database file as every month's
 // release.
 func (s *databaseServer) releaseEveryMonth(t *testing.T, file string) {
@@ -72,6 +77,26 @@ func (s *databaseServer) releaseEveryMonth(t *testing.T, file string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.everyMonth = gz
+}
+
+// setFailing makes every download fail with 500, or stops it.
+func (s *databaseServer) setFailing(failing bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failing = failing
+}
+
+// hold holds every download up until the returned function is called.
+func (s *databaseServer) hold(t *testing.T) func() {
+	t.Helper()
+	held := make(chan struct{})
+	s.mu.Lock()
+	s.held = held
+	s.mu.Unlock()
+	var once sync.Once
+	release := func() { once.Do(func() { close(held) }) }
+	t.Cleanup(release)
+	return release
 }
 
 // serve answers a download.
@@ -140,4 +165,18 @@ const cityLoaded = `goblog_stats_database_loaded{database="city"}`
 func (g *goblog) waitForCity(t *testing.T) {
 	t.Helper()
 	g.waitForMetric(t, cityLoaded, 1)
+}
+
+// waitForWarnings waits until Site Statistics have logged n warnings, and
+// fails the test if they don't within 5 seconds.
+func (g *goblog) waitForWarnings(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(g.statsWarnings()) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("got %d Site Statistics warnings, want %d:\n%s",
+				len(g.statsWarnings()), n, strings.Join(g.statsWarnings(), "\n"))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

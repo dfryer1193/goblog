@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // visitFromIP is a Page View of /about/ from ip, as the gateway forwards it,
@@ -78,4 +79,59 @@ func TestNoLineSaysACityOrCoordinates(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestServingDoesntWaitForTheLocationDatabase(t *testing.T) {
+	t.Parallel()
+	databases := newDatabaseServer(t)
+	databases.releaseEveryMonth(t, geoLite2City)
+	finishDownload := databases.hold(t)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+
+	// While the download is held up, the site is served without location.
+	assertLocation(t, visitFromIP(t, g, "81.2.69.142"), "", "")
+	if got := g.metric(t, cityLoaded); got != 0 {
+		t.Errorf("while downloading, %s = %v, want 0", cityLoaded, got)
+	}
+
+	finishDownload()
+	g.waitForCity(t)
+	assertLocation(t, visitFromIP(t, g, "81.2.69.142"), "GB", "England")
+}
+
+func TestWithTheDownloadFailingLinesOmitLocationWithAWarning(t *testing.T) {
+	t.Parallel()
+	databases := newDatabaseServer(t)
+	databases.releaseEveryMonth(t, geoLite2City)
+	databases.setFailing(true)
+	g := startGoblog(t, statsSite(t), databases.env())
+	g.sync(t)
+	g.waitForWarnings(t, 1)
+
+	line := visitFromIP(t, g, "81.2.69.142")
+
+	assertPageView(t, line, "/about/", "page")
+	assertLocation(t, line, "", "")
+	if got := g.metric(t, cityLoaded); got != 0 {
+		t.Errorf("%s = %v, want 0", cityLoaded, got)
+	}
+	if warnings := g.statsWarnings(); len(warnings) != 1 {
+		t.Errorf("got %d warnings, want 1:\n%s", len(warnings), strings.Join(warnings, "\n"))
+	}
+	if strings.Contains(g.metricsText(t), "goblog_stats_database_age_seconds") {
+		t.Errorf("without a City database, there's an age metric:\n%s", g.metricsText(t))
+	}
+
+	// goblog tries again an hour later.
+	databases.setFailing(false)
+	g.clock.advance(59 * time.Minute)
+	visitFromIP(t, g, "81.2.69.142")
+	if got := g.metric(t, cityLoaded); got != 0 {
+		t.Errorf("59 minutes later, %s = %v, want 0, before trying again", cityLoaded, got)
+	}
+	g.clock.advance(time.Minute)
+	visitFromIP(t, g, "81.2.69.142")
+	g.waitForCity(t)
+	assertLocation(t, visitFromIP(t, g, "81.2.69.142"), "GB", "England")
 }
