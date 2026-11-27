@@ -94,11 +94,12 @@ The server is configured from the environment:
 | `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
 | `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
 | `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
-| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone, the rendered site and the [location database](#location), e.g. an `emptyDir` | `goblog` under the temp directory          |
+| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone, the rendered site and the [location](#location) and [network](#network) databases, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
 | `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs: see [the salt file](#the-salt-file)     | none: Page Views have no Visitor ID        |
 | `GOBLOG_STATS_CITY_DB_URL` | The URL of the [location database](#location)'s monthly release, with `{YYYY}` and `{MM}` for its year and month | `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz` |
+| `GOBLOG_STATS_ASN_DB_URL` | The URL of the [network database](#network)'s monthly release, likewise | `https://download.db-ip.com/free/dbip-asn-lite-{YYYY}-{MM}.mmdb.gz` |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
@@ -330,16 +331,19 @@ contract: later versions only add fields.
 | `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
 | `country` | The Visitor's country, as an ISO 3166-1 alpha-2 code such as `US`. Page Views and Visitor 404s only. Omitted without the [location database](#location), or if it doesn't know the client IP |
 | `region` | The Visitor's state or province, as its English name such as `New York`. Omitted as `country` is, or if the database has only the country |
+| `hosting` | Whether the Visitor's network is a [hosting network](#network), such as a cloud or datacenter: `true` or `false`. Page Views and Visitor 404s only, which never say which network. Omitted without the network database, or if it doesn't know the client IP |
 | `bot`    | A Bot request's Bot name, or `unknown`                            |
+| `asn`    | A Bot request's [network](#network)'s AS number, such as `15169`. Omitted without the network database, or if it doesn't know the client IP |
+| `as_org` | The organisation owning a Bot request's network, such as `Google LLC`. Omitted as `asn` is, or if the database has no organisation for it |
 | `reader` | A feed fetch's feed reader, such as `Inoreader`                   |
 | `subscribers` | A feed fetch's reported subscriber count; absent if the reader reports none |
 
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"Hacker News","source_kind":"social","entry":true}
-{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"lobste.rs","source_kind":"site","entry":true}
-{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"Hacker News","source_kind":"social","hosting":false,"entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"lobste.rs","source_kind":"site","hosting":false,"entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown","asn":14061,"as_org":"DigitalOcean, LLC"}
 {"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
 
@@ -447,6 +451,37 @@ on the disk or the network.
 - **Disk:** the work directory holds the copy in use and, while a new
   release downloads, the new one: about 250 MB for DB-IP's City Lite.
 
+### Network
+
+A Bot request's `asn` and `as_org`, and a Page View's or Visitor 404's
+`hosting`, come from the client IP, looked up in
+[DB-IP's IP to ASN Lite](https://db-ip.com/db/download/ip-to-asn-lite)
+database, also licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It's downloaded,
+refreshed and checked as the [location database](#location) is, from
+`GOBLOG_STATS_ASN_DB_URL`, as the `asn` database in the metrics. It needs
+about 20 MB of the work directory. Without it, Bot lines go without `asn`
+and `as_org`, Visitors' lines without `hosting`, and goblog logs a warning.
+
+A Visitor's line never says which network they're on: `hosting` is only
+whether its AS number is on a vendored list of hosting, cloud and
+datacenter networks, the `hosting` category of
+[ipverse/as-metadata](https://github.com/ipverse/as-metadata) (CC0). The
+list, its origin and how to update it are in
+[`stats/networks`](stats/networks/ORIGIN.md). It's meant to spot Bots
+posing as browsers ("datacenter Chrome") without counting VPN readers as
+Bots, so read it with care:
+
+- ipverse classifies networks automatically, by their primary function,
+  and says it won't always be right.
+- The CDNs that iCloud Private Relay and Cloudflare WARP send traffic
+  from, such as Cloudflare (AS13335), Akamai (AS20940, AS16625, AS36183)
+  and Fastly (AS54113), are hosting networks. So Safari readers using
+  Private Relay, and WARP users, are `hosting: true`. Private Relay is
+  Safari-only, so `hosting` Chrome is still telling.
+- Some VPNs run on hosting networks too, so `hosting` alone doesn't mean
+  a Bot.
+
 ### The metrics
 
 Served at `/metrics` on `GOBLOG_METRICS_PORT` (default `9090`), never on the
@@ -461,7 +496,7 @@ site's port:
 | `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
 | `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
 | `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
-| `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city`) is loaded, 0 while lines go without its data |
+| `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city` or `asn`) is loaded, 0 while lines go without its data |
 | `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |
 
 Bot and feed reader names come from the crawler list, so their label sets
@@ -537,4 +572,6 @@ See [LICENSE](LICENSE).
 
 IP geolocation by [DB-IP](https://db-ip.com), under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): see
-[Location](#location).
+[Location](#location) and [Network](#network). The hosting-network list is
+from [ipverse/as-metadata](https://github.com/ipverse/as-metadata), under
+CC0 1.0: see [`stats/networks`](stats/networks/ORIGIN.md).
