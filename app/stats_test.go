@@ -316,3 +316,52 @@ func TestAPageViewLineHasTheBrowserOSAndDeviceFamilies(t *testing.T) {
 		})
 	}
 }
+
+func TestAnUnrecognisedUserAgentsPageViewHasOtherAndUnknownFamilies(t *testing.T) {
+	t.Parallel()
+	for _, userAgent := range []string{
+		"totally unknown thing",
+		"Mozilla/5.0 (Hurd; GNU) Wobble/7.3.1",
+	} {
+		t.Run(userAgent, func(t *testing.T) {
+			t.Parallel()
+			g := startGoblog(t, statsSite(t), nil)
+			g.sync(t)
+
+			g.request(t, http.MethodGet, "/posts/hello/", http.Header{"User-Agent": {userAgent}})
+
+			line := g.statsLines(t, 1)[0]
+			assertPageView(t, line, "/posts/hello/", "post")
+			for field, want := range map[string]any{
+				"browser": "other", "browser_major": nil, "os": "other", "device": "unknown",
+			} {
+				if line[field] != want {
+					t.Errorf("%s = %v, want %v; line: %v", field, line[field], want, line)
+				}
+			}
+		})
+	}
+}
+
+func TestAPageViewLineHasNoRawUserAgentOrFullVersion(t *testing.T) {
+	t.Parallel()
+	const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 " +
+		"(KHTML, like Gecko) CriOS/142.0.7444.77 Mobile/15E148 Safari/604.1"
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+
+	g.request(t, http.MethodGet, "/posts/hello/", http.Header{"User-Agent": {userAgent}})
+
+	line := g.statsLines(t, 1)[0]
+	for field, value := range line {
+		s, ok := value.(string)
+		if !ok {
+			continue
+		}
+		for _, leak := range []string{userAgent, "CriOS", "142.0", "7444", "18_6", "15E148"} {
+			if strings.Contains(s, leak) {
+				t.Errorf("%s = %q, which contains %q from the User-Agent", field, s, leak)
+			}
+		}
+	}
+}
