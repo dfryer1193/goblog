@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/dfryer1193/goblog/api"
 	"github.com/dfryer1193/goblog/data"
 	"github.com/dfryer1193/goblog/service"
+	"github.com/dfryer1193/goblog/stats"
 )
 
 // The environment variables serve mode reads.
@@ -93,6 +95,12 @@ type Config struct {
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
+	// StatsConfig is Site Statistics' settings. Nil means the defaults. It
+	// isn't read from the environment; tests set it.
+	StatsConfig stats.Settings
+	// StatsOutput receives the Site Statistics JSON lines. Nil means
+	// stdout. It isn't read from the environment; tests set it.
+	StatsOutput io.Writer
 }
 
 // ConfigFromEnv reads Config from the environment through lookup, which has
@@ -160,7 +168,12 @@ func New(cfg Config) (*App, error) {
 		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
-	a.router, err = api.NewRouter(publisher, api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire})
+	siteStats := stats.New(stats.Config{Settings: cfg.StatsConfig, Now: cfg.Now, Output: cfg.StatsOutput})
+	a.router, err = api.NewRouter(
+		publisher,
+		api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire},
+		siteStats.Wrap,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("building the HTTP handler: %w", err)
 	}

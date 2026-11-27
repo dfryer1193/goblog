@@ -15,6 +15,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"maps"
 	"net/http"
@@ -168,6 +169,43 @@ func (c *testClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// statsOutput captures the Site Statistics JSON lines goblog writes.
+type statsOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write captures p.
+func (o *statsOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Write(p)
+}
+
+// lines are the complete lines written so far.
+func (o *statsOutput) lines() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	text := o.buf.String()
+	if complete, _, ok := strings.CutLast(text, "\n"); ok {
+		return strings.Split(complete, "\n")
+	}
+	return nil
+}
+
+// fakeStatsConfig is a StatsConfig a test can change while goblog runs.
+type fakeStatsConfig struct {
+	mu       sync.Mutex
+	disabled bool
+}
+
+// Enabled reports whether Site Statistics are on. They are by default.
+func (c *fakeStatsConfig) Enabled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.disabled
+}
+
 // goblog is a running goblog under test.
 type goblog struct {
 	app   *app.App
@@ -175,6 +213,10 @@ type goblog struct {
 	clock *testClock
 	// workDir is goblog's working directory (GOBLOG_WORK_DIR).
 	workDir string
+	// stats is where goblog writes its Site Statistics lines.
+	stats *statsOutput
+	// statsConfig is goblog's StatsConfig.
+	statsConfig *fakeStatsConfig
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
@@ -200,6 +242,10 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 	}
 	clock := &testClock{now: startTime()}
 	cfg.Now = clock.Now
+	output := &statsOutput{}
+	cfg.StatsOutput = output
+	statsConfig := &fakeStatsConfig{}
+	cfg.StatsConfig = statsConfig
 
 	a, err := app.New(cfg)
 	if err != nil {
@@ -207,7 +253,30 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 	}
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
-	return &goblog{app: a, srv: srv, clock: clock, workDir: cfg.WorkDir}
+	return &goblog{app: a, srv: srv, clock: clock, workDir: cfg.WorkDir, stats: output, statsConfig: statsConfig}
+}
+
+// statsLines waits for goblog to have written n Site Statistics lines, and
+// returns them decoded. It fails the test if there are more, or if they
+// don't arrive.
+func (g *goblog) statsLines(t *testing.T, n int) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	lines := g.stats.lines()
+	for len(lines) < n && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+		lines = g.stats.lines()
+	}
+	if len(lines) != n {
+		t.Fatalf("got %d Site Statistics lines, want %d:\n%s", len(lines), n, strings.Join(lines, "\n"))
+	}
+	decoded := make([]map[string]any, n)
+	for i, line := range lines {
+		if err := json.Unmarshal([]byte(line), &decoded[i]); err != nil {
+			t.Fatalf("Site Statistics line %d isn't JSON: %v\n%s", i, err, line)
+		}
+	}
+	return decoded
 }
 
 // sync runs one sync now (fetch, render and switch over) and fails the test
