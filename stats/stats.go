@@ -347,11 +347,11 @@ func (s *Stats) record(req request) {
 	if req.kind == kindFeed && s.recordFeedFetch(req) {
 		return
 	}
-	if bot, ok := s.bot(req.userAgent); ok {
+	if bot, ok := s.botName(req.userAgent); ok {
 		s.botRequests.WithLabelValues(bot, statusClass(req.status), string(req.kind)).Inc()
-		asNet := networkOf(s.asn, ip)
+		botNetwork := networkOf(s.asn, ip)
 		l := req.baseLine(classBot)
-		l.Bot, l.ASN, l.ASOrg = bot, asNet.asn, asNet.org
+		l.Bot, l.ASN, l.ASOrg = bot, botNetwork.asn, botNetwork.org
 		s.emit(l)
 		return
 	}
@@ -371,15 +371,15 @@ func (s *Stats) record(req request) {
 // it carries the Visitor fields, which Page Views and Visitor 404s share.
 func (s *Stats) visitorLine(req request, ip netip.Addr, c class) line {
 	loc := locationOf(s.city, ip)
-	asNet := networkOf(s.asn, ip)
+	visitorNetwork := networkOf(s.asn, ip)
 	f := familiesOf(s.userAgents, req.userAgent)
 	l := req.baseLine(c)
 	l.Browser, l.BrowserMajor, l.OS, l.Device = f.browser, f.browserMajor, f.os, f.device
 	l.Country, l.Region = loc.country, loc.region
 	// The network itself is never on a Visitor's line: only whether it's a
 	// hosting network.
-	if asNet.asn != 0 {
-		hosting := s.hosting.contains(asNet.asn)
+	if visitorNetwork.asn != 0 {
+		hosting := s.hosting.contains(visitorNetwork.asn)
 		l.Hosting = &hosting
 	}
 	if key := s.salt.current(); key != nil {
@@ -429,9 +429,9 @@ func (s *Stats) setSubscribers(reader string, at time.Time, n int) {
 	s.feedSubscribers.WithLabelValues(reader).Set(float64(n))
 }
 
-// bot is the Bot name of a request with userAgent, if it's a Bot's.
-func (s *Stats) bot(userAgent string) (string, bool) {
-	if cr, ok := s.crawlers.match(userAgent, false); ok {
+// botName is the Bot name of a request with userAgent, if it's a Bot's.
+func (s *Stats) botName(userAgent string) (string, bool) {
+	if cr, ok := s.crawlers.match(userAgent); ok {
 		return cr.name, true
 	}
 	if botByHeuristics(userAgent) {

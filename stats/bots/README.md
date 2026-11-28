@@ -17,7 +17,7 @@ goblog uses each entry's `pattern` and `tags`:
 
 - An entry's Bot name comes from its pattern, with the anchors, escapes and a
   trailing slash removed (`Googlebot\/` is `Googlebot`). A few patterns
-  that would read badly have a name of their own, in `botName` in
+  that would read badly have a name of their own, in `patternBotName` in
   [`../bot.go`](../bot.go). Entries tagged `http-library` are all the Bot
   `unknown`. So the names are bounded by the list.
 - Entries tagged `feed-reader` are feed readers when they request the feed,
