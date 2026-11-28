@@ -66,8 +66,9 @@ type databaseConfig struct {
 
 // database is a monthly-released MMDB, such as DB-IP's City Lite, kept up to
 // date in a directory. It starts downloading the current month's release
-// (or else last month's) in the background, and refresh fetches the next
-// one when the month changes, swapping it in without a restart. It keeps
+// (or else last month's) in the background, and until the current month's
+// has loaded, refresh tries again once databaseRetryInterval has passed,
+// swapping the new copy in without a restart. It keeps
 // the copy in use until a new one has loaded, then deletes the old one, so
 // the directory never holds more than the copy in use and the one being
 // fetched. Lookups are from the memory-mapped file.

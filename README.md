@@ -97,7 +97,7 @@ The server is configured from the environment:
 | `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone, the rendered site and the [location](#location) and [network](#network) databases, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
-| `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs: see [the salt file](#the-salt-file)     | none: Page Views have no Visitor ID        |
+| `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs, at least 32 bytes: see [the salt file](#the-salt-file) | none: Page Views have no Visitor ID        |
 | `GOBLOG_STATS_CITY_DB_URL` | The URL of the [location database](#location)'s monthly release, with `{YYYY}` and `{MM}` for its year and month | `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz` |
 | `GOBLOG_STATS_ASN_DB_URL` | The URL of the [network database](#network)'s monthly release, likewise | `https://download.db-ip.com/free/dbip-asn-lite-{YYYY}-{MM}.mmdb.gz` |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
@@ -273,12 +273,14 @@ request is dropped, uncounted; if stdout can't, the line is. Either way
 
 A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
-Post, a Page, the index or a tag page), answered with 200 or 304. Images,
+Post, a Page, the index or a tag page), answered with 200 or 304. goblog
+doesn't send validators (`ETag` or `Last-Modified`) yet, so it never answers
+304 today; the rule is kept for when validators are added. Images,
 assets, the feed, the sitemap, redirects and 404s are never Page Views.
 
 A **Visitor 404** is a Visitor's request answered with the 404 page, under
-the same rules as a Page View: a `GET` (not `HEAD`, which link checkers
-send) that isn't a prefetch. It's never a Page View. Its line carries the
+the same rules as a Page View: only a `GET` (never a `HEAD`, which link
+checkers send), and never a prefetch. It's never a Page View. Its line carries the
 same Visitor fields as a Page View's (the Visitor ID, the Source, `entry`,
 the browser, operating system and device), so it says which missing paths
 Visitors hit and which Sources sent them. A Bot's 404 is a Bot request of
@@ -442,13 +444,16 @@ have a location once it's loaded. It's memory-mapped, so lookups never wait
 on the disk or the network.
 
 - **Releases:** DB-IP releases it on the 1st of each month, and serves only
-  this month's and last month's. goblog fetches this month's release, or
-  last month's if this month's isn't out yet. `GOBLOG_STATS_CITY_DB_URL`
+  this month's and last month's (months in UTC). `GOBLOG_STATS_CITY_DB_URL`
   sets where from: `{YYYY}` and `{MM}` are replaced with the release's year
   and month. A gzipped release is decompressed as it downloads.
-- **Refreshing:** until it has this month's release, goblog tries again
-  an hour after each attempt (on a request, by the clock), and swaps the
-  new copy in without a restart. It keeps the copy in use until the new
+- **Refreshing:** each attempt downloads this month's release. If that
+  isn't out yet (a 404), it downloads last month's instead, unless last
+  month's is already the copy in use. goblog makes one attempt at startup,
+  then, until this month's release has loaded, another an hour after the
+  last one began, when it next records a request. Once it has this month's
+  release, it downloads nothing until the month changes. A new copy is
+  swapped in without a restart: goblog keeps the copy in use until the new
   one has loaded and been checked, then deletes the old one.
 - **Failures:** if the download fails, goblog keeps serving, logs a
   warning, and keeps using the copy it has. Without one, lines go
@@ -496,7 +501,7 @@ site's port:
 | Metric                        | Type    | Labels | Counts                                                 |
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
-| `goblog_visitor_not_found_total` | counter | none | Visitor 404s                                      |
+| `goblog_visitor_not_found_total` | counter | none | Visitor 404s: `GET`s only, never prefetches       |
 | `goblog_bot_requests_total`   | counter | `bot`, `status_class` (`2xx`, `3xx`, `4xx` or `5xx`), `kind` | Bot requests |
 | `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
 | `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
@@ -507,7 +512,8 @@ site's port:
 | `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |
 
 Bot and feed reader names come from the crawler list, so their label sets
-are bounded.
+are bounded. While `enabled` is off, no request is counted, as no line is
+written.
 
 ### Settings
 
@@ -521,7 +527,7 @@ Change its Items with Mimir Overrides for Deployable `goblog`:
 | Item                | Type         | Meaning | Default |
 | ------------------- | ------------ | ------- | ------- |
 | `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP before anything else, so even a Bot or feed reader there emits nothing. An entry that isn't a CIDR is skipped with a warning (once, not on every request) giving its position in the list, sorted, and why, but never its text; the rest still apply | empty |
-| `enabled`           | `bool`       | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
+| `enabled`           | `bool`       | Whether Site Statistics are on. Off, they stop both: no lines are written and no metrics count anything; the site is served as usual | `true` |
 
 Keep your networks in Mimir, not in the Content Repository, so they're never
 published.

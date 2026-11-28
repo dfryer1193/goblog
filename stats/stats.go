@@ -46,7 +46,7 @@ const (
 // request, so changes apply live.
 type Settings interface {
 	// Enabled reports whether Site Statistics are on. While they're off,
-	// nothing is emitted.
+	// nothing is emitted: neither lines nor metrics.
 	Enabled() bool
 	// ExcludedNetworks are CIDRs, such as the author's own networks, whose
 	// requests emit nothing at all. Entries that aren't CIDRs are skipped,
