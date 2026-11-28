@@ -27,4 +27,15 @@ type line struct {
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
 	Kind string `json:"kind"`
+	// Browser is a Page View's browser family, such as "Firefox", or
+	// "other".
+	Browser string `json:"browser,omitempty"`
+	// BrowserMajor is a Page View's browser's major version, such as
+	// "145". It's omitted when it isn't known.
+	BrowserMajor string `json:"browser_major,omitempty"`
+	// OS is a Page View's operating system family, such as "macOS", or
+	// "other".
+	OS string `json:"os,omitempty"`
+	// Device is a Page View's device type, such as "mobile", or "unknown".
+	Device string `json:"device,omitempty"`
 }
