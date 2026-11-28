@@ -94,9 +94,12 @@ The server is configured from the environment:
 | `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
 | `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
 | `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
-| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
+| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone, the rendered site and the [location](#location) and [network](#network) databases, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
+| `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs, at least 32 bytes: see [the salt file](#the-salt-file) | none: Page Views have no Visitor ID        |
+| `GOBLOG_STATS_CITY_DB_URL` | The URL of the [location database](#location)'s monthly release, with `{YYYY}` and `{MM}` for its year and month | `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz` |
+| `GOBLOG_STATS_ASN_DB_URL` | The URL of the [network database](#network)'s monthly release, likewise | `https://download.db-ip.com/free/dbip-asn-lite-{YYYY}-{MM}.mmdb.gz` |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
@@ -213,6 +216,12 @@ goblog ships no manifests, so here is everything a deployment needs:
 - **Metrics:** Prometheus metrics at `/metrics` on `GOBLOG_METRICS_PORT`
   (default `9090`), apart from the site. Keep that port off the public
   route, and point your scraper at it.
+- **Salt:** a Secret holding the daily salt, mounted read-only and named by
+  `GOBLOG_STATS_SALT_FILE`, replaced every day at 00:00 UTC by a scheduled
+  job. See [the salt file](#the-salt-file).
+- **Mimir:** `MIMIR_ENVIRONMENT` and read-only object storage credentials,
+  so the [StatsConfig](#settings) can change live. Without them, goblog
+  runs on its defaults.
 - **Webhook:** the Content Repository's push webhook goes to `/webhook` on
   the site's public hostname.
 - **Replicas:** each replica clones, polls and renders on its own, with no
@@ -253,14 +262,48 @@ goblog counts how its site is read without cookies, JavaScript or a
 database (see [ADR-0002](docs/adr/0002-site-statistics-without-a-database.md)
 and the glossary's Site Statistics terms). It classifies each request for
 the site's files and emits what it learns two ways: a JSON line on stdout
-for each Page View, and Prometheus metrics. The probes and the webhook
-aren't counted. Emitting never changes or delays a response: if stdout
-can't keep up, lines are dropped.
+for each Page View, Visitor 404, Bot request and feed fetch, and Prometheus
+metrics. The
+probes and the webhook aren't counted. Site Statistics never change or
+delay a response: serving a request only takes a snapshot of it and queues
+it, and everything else (classifying it, looking it up, counting it and
+writing its line) happens in the background. If that can't keep up, the
+request is dropped, uncounted; if stdout can't, the line is. Either way
+`goblog_stats_dropped_total` counts it.
 
 A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
-Post, a Page, the index or a tag page), answered with 200 or 304. Images,
+Post, a Page, the index or a tag page), answered with 200 or 304. goblog
+doesn't send validators (`ETag` or `Last-Modified`) yet, so it never answers
+304 today; the rule is kept for when validators are added. Images,
 assets, the feed, the sitemap, redirects and 404s are never Page Views.
+
+A **Visitor 404** is a Visitor's request answered with the 404 page, under
+the same rules as a Page View: only a `GET` (never a `HEAD`, which link
+checkers send), and never a prefetch. It's never a Page View. Its line carries the
+same Visitor fields as a Page View's (the Visitor ID, the Source, `entry`,
+the browser, operating system and device), so it says which missing paths
+Visitors hit and which Sources sent them. A Bot's 404 is a Bot request of
+kind `missing`, never a Visitor 404.
+
+A **Bot request** is one whose `User-Agent` matches the
+[crawler list](stats/bots/README.md), is empty, or is an HTTP library's or
+command-line tool's (such as curl, python-requests or Go-http-client). A
+Bot request is never a Page View. Its Bot name is the list entry's (such as
+`Googlebot`, `bingbot` or `GPTBot`), or `unknown` for an empty `User-Agent`
+or an HTTP library's. The crawler list is
+[monperrus/crawler-user-agents](https://github.com/monperrus/crawler-user-agents)
+(MIT), embedded in goblog. [`stats/bots/README.md`](stats/bots/README.md)
+records its version and says how to update it.
+
+A **feed fetch** is a known feed reader's request for the feed, `/feed.xml`.
+The feed readers are the crawler list's (such as Inoreader, Feedly, Feedbin
+and NewsBlur) plus NetNewsWire. A feed reader's request is checked before
+the Bot rules, so it's a feed fetch even though the list has it: anywhere
+but the feed, it's a Bot request. When its `User-Agent` reports a
+subscriber count (`N subscribers`, as Inoreader, Feedbin and NewsBlur
+document), the feed fetch carries it. The counts are approximate: Feedly,
+for one, may fetch the same feed under more than one feed ID.
 
 Each request has a **kind of page**, from its path: `post`, `page`, `index`,
 `tag` (the tags page or a tag's page), `image`, `asset` (the stylesheet,
@@ -269,15 +312,15 @@ fonts and licences), `feed`, `sitemap`, `missing` (anything answered with
 
 ### The JSON lines
 
-Each Page View writes one JSON object on its own line to stdout, among
-goblog's ordinary logs. These field names are a contract: later versions
-only add fields.
+Each Page View, Visitor 404, Bot request and feed fetch writes one JSON
+object on its own line to stdout, among goblog's ordinary logs. These field names are a
+contract: later versions only add fields.
 
 | Field    | Meaning                                                           |
 | -------- | ----------------------------------------------------------------- |
 | `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
-| `time`   | When the request was answered: RFC 3339, in UTC                   |
-| `class`  | The class of request: `page_view`                                 |
+| `time`   | When the request arrived: RFC 3339, in UTC                        |
+| `class`  | The class of request: `page_view`, `not_found` (a Visitor 404), `bot` or `feed_fetch` |
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
 | `kind`   | The kind of page                                                  |
@@ -285,11 +328,29 @@ only add fields.
 | `browser_major` | The browser's major version, such as `145`. Omitted if it isn't known |
 | `os`            | The operating system's family: `Windows`, `macOS`, `Linux`, `ChromeOS`, `iOS`, `Android`, `FreeBSD` or `OpenBSD`; `other` if it isn't recognised |
 | `device`        | The device type: `desktop`, `mobile`, `tablet` or `tv`; `unknown` if it isn't recognised |
+| `source` | The Source's name, such as `Google`, `Hacker News`, `example.co.uk` or a Campaign's source. Absent for `direct` and `internal` |
+| `source_kind` | The kind of Source: `search`, `social`, `ai`, `site`, `campaign`, `direct` or `internal` |
+| `campaign_source` | A Campaign's `utm_source` or `ref`. Absent unless `source_kind` is `campaign` |
+| `campaign_medium` | A Campaign's `utm_medium`, if it has one |
+| `campaign_name` | A Campaign's `utm_campaign`, if it has one |
+| `entry`  | Whether the Visitor arrived from outside the site: `false` only when the referrer is the site itself |
+| `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
+| `country` | The Visitor's country, as an ISO 3166-1 alpha-2 code such as `US`. Page Views and Visitor 404s only. Omitted without the [location database](#location), or if it doesn't know the client IP |
+| `region` | The Visitor's state or province, as its English name such as `New York`. Omitted as `country` is, or if the database has only the country |
+| `hosting` | Whether the Visitor's network is a [hosting network](#network), such as a cloud or datacenter: `true` or `false`. Page Views and Visitor 404s only, which never say which network. Omitted without the network database, or if it doesn't know the client IP |
+| `bot`    | A Bot request's Bot name, or `unknown`                            |
+| `asn`    | A Bot request's [network](#network)'s AS number, such as `15169`. Omitted without the network database, or if it doesn't know the client IP |
+| `as_org` | The organisation owning a Bot request's network, such as `Google LLC`. Omitted as `asn` is, or if the database has no organisation for it |
+| `reader` | A feed fetch's feed reader, such as `Inoreader`                   |
+| `subscribers` | A feed fetch's reported subscriber count; absent if the reader reports none |
 
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"Hacker News","source_kind":"social","hosting":false,"entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"lobste.rs","source_kind":"site","hosting":false,"entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown","asn":14061,"as_org":"DigitalOcean, LLC"}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
 
 The browser, operating system and device come from the User-Agent, parsed
@@ -300,6 +361,138 @@ values. A line never carries the raw User-Agent, or any version finer than
 the browser's major one. Safari on an iPad sends the same User-Agent as Safari
 on a Mac by default, so it counts as `macOS` and `desktop`.
 
+### Sources and Campaigns
+
+The Source comes from the `Referer` header's host. Browsers mostly send
+only the origin to other sites, and a full URL is treated the same way.
+
+- **`search`, `social` and `ai`:** the host is on
+  [Matomo's search-engine and social list](https://github.com/matomo-org/searchengine-and-social-list),
+  vendored in [`stats/sources`](stats/sources/ORIGIN.md) with its origin,
+  licence (CC0) and how to update it, as a search engine, a social site or
+  an AI assistant (such as ChatGPT or Claude). The list's name is the
+  Source, so `news.ycombinator.com` is `Hacker News`.
+- **`site`:** any other host, grouped by its registrable domain, so
+  `foo.example.co.uk` is `example.co.uk`. An app's package name (from an
+  `android-app://` referrer) is named as it is. Every IP address, IPv4 or
+  IPv6, is the one Source `ip`: no address is ever on a line.
+- **`internal`:** the host is the site's own, from `site.yaml`'s `url`,
+  with or without `www.`. Without a `url`, the host the request was sent to
+  is the site's. This is navigation within the site, not a Source, and it
+  isn't an `entry`.
+- **`direct`:** no referrer (or an unreadable one), and no Campaign.
+- **`campaign`:** the page's URL is tagged with `utm_source` (with optional
+  `utm_medium` and `utm_campaign`), or else with `ref`. A Campaign takes
+  precedence over the referrer, but a tagged link within the site still
+  isn't an `entry`. Its values are trimmed, lower-cased and cut to 64
+  characters, as are `site` names.
+
+### Visitor IDs
+
+A Visitor ID tells Visitors apart for one UTC day, without cookies and
+across every replica. It's the first 8 bytes, in hex (16 digits), of
+HMAC-SHA-256 keyed with the daily salt, over the client IP, a NUL byte and
+the `User-Agent`. Once the salt is replaced and destroyed, nobody, the
+author included, can recompute an old day's Visitor IDs or tie them to the
+new day's.
+
+The client IP is the rightmost `X-Forwarded-For` entry, which the gateway
+in front of goblog appends, so goblog must sit behind exactly one proxy
+that appends it. Without the header, or if its rightmost entry isn't an IP
+address, goblog uses the TCP peer. The client IP is never written to a
+line or a log.
+
+#### The salt file
+
+The salt is a file at the path in `GOBLOG_STATS_SALT_FILE`, such as a
+mounted Kubernetes Secret. goblog only reads it: it never makes up, derives
+or stores a salt of its own. Whatever writes it must follow this contract:
+
+- **Contents:** the raw bytes of the salt, at least **32 bytes** of fresh
+  randomness, such as `head -c 32 /dev/urandom`. The whole file is the
+  salt, byte for byte: nothing is trimmed or decoded, so a trailing newline
+  is part of it.
+- **Rotation:** replaced with a new random salt every day at **00:00 UTC**,
+  with the old one destroyed, not kept anywhere. Every replica reads the
+  same file, so they agree on Visitor IDs.
+- **Reloading:** goblog rereads the file at most every 5 seconds, and uses
+  a new salt as soon as it sees one, with no restart. (A mounted Secret
+  takes the kubelet up to a minute or so to update, so replicas may
+  disagree briefly around 00:00 UTC.)
+
+If the variable isn't set, or the file is missing, empty, shorter than 32
+bytes or unreadable, Page View and Visitor 404 lines leave out `visitor_id` and everything
+else is emitted as usual. goblog logs a warning when the salt becomes
+unusable (not on every request), `goblog_stats_salt_loaded` reads 0, and
+Visitor IDs come back once the file is usable again.
+
+### Location
+
+IP geolocation by [DB-IP](https://db-ip.com).
+
+A Page View's or Visitor 404's `country` and `region` come from the client IP, looked up in
+[DB-IP's IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite)
+database, licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Nothing finer
+than the state or province is read: never the city or coordinates. DB-IP
+Lite has no codes for states and provinces, so the region is the
+database's English name for it.
+
+goblog downloads the database into `databases/` in `GOBLOG_WORK_DIR` in
+the background at startup, so the site is served at once, and Page Views
+have a location once it's loaded. It's memory-mapped, so lookups never wait
+on the disk or the network.
+
+- **Releases:** DB-IP releases it on the 1st of each month, and serves only
+  this month's and last month's (months in UTC). `GOBLOG_STATS_CITY_DB_URL`
+  sets where from: `{YYYY}` and `{MM}` are replaced with the release's year
+  and month. A gzipped release is decompressed as it downloads.
+- **Refreshing:** each attempt downloads this month's release. If that
+  isn't out yet (a 404), it downloads last month's instead, unless last
+  month's is already the copy in use. goblog makes one attempt at startup,
+  then, until this month's release has loaded, another an hour after the
+  last one began, when it next records a request. Once it has this month's
+  release, it downloads nothing until the month changes. A new copy is
+  swapped in without a restart: goblog keeps the copy in use until the new
+  one has loaded and been checked, then deletes the old one.
+- **Failures:** if the download fails, goblog keeps serving, logs a
+  warning, and keeps using the copy it has. Without one, lines go
+  without `country` and `region`, and `goblog_stats_database_loaded` reads
+  0.
+- **Disk:** the work directory holds the copy in use and, while a new
+  release downloads, the new one: about 250 MB for DB-IP's City Lite.
+
+### Network
+
+A Bot request's `asn` and `as_org`, and a Page View's or Visitor 404's
+`hosting`, come from the client IP, looked up in
+[DB-IP's IP to ASN Lite](https://db-ip.com/db/download/ip-to-asn-lite)
+database, also licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It's downloaded,
+refreshed and checked as the [location database](#location) is, from
+`GOBLOG_STATS_ASN_DB_URL`, as the `asn` database in the metrics. It needs
+about 20 MB of the work directory. Without it, Bot lines go without `asn`
+and `as_org`, Visitors' lines without `hosting`, and goblog logs a warning.
+
+A Visitor's line never says which network they're on: `hosting` is only
+whether its AS number is on a vendored list of hosting, cloud and
+datacenter networks, the `hosting` category of
+[ipverse/as-metadata](https://github.com/ipverse/as-metadata) (CC0). The
+list, its origin and how to update it are in
+[`stats/networks`](stats/networks/ORIGIN.md). It's meant to spot Bots
+posing as browsers ("datacenter Chrome") without counting VPN readers as
+Bots, so read it with care:
+
+- ipverse classifies networks automatically, by their primary function,
+  and says it won't always be right.
+- The CDNs that iCloud Private Relay and Cloudflare WARP send traffic
+  from, such as Cloudflare (AS13335), Akamai (AS20940, AS16625, AS36183)
+  and Fastly (AS54113), are hosting networks. So Safari readers using
+  Private Relay, and WARP users, are `hosting: true`. Private Relay is
+  Safari-only, so `hosting` Chrome is still telling.
+- Some VPNs run on hosting networks too, so `hosting` alone doesn't mean
+  a Bot.
+
 ### The metrics
 
 Served at `/metrics` on `GOBLOG_METRICS_PORT` (default `9090`), never on the
@@ -308,18 +501,56 @@ site's port:
 | Metric                        | Type    | Labels | Counts                                                 |
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
-| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as images, assets, the feed, redirects and 404s |
+| `goblog_visitor_not_found_total` | counter | none | Visitor 404s: `GET`s only, never prefetches       |
+| `goblog_bot_requests_total`   | counter | `bot`, `status_class` (`2xx`, `3xx`, `4xx` or `5xx`), `kind` | Bot requests |
+| `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
+| `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
+| `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
+| `goblog_stats_dropped_total`  | counter | none   | Requests left uncounted and lines left unwritten, because recording or stdout couldn't keep up |
+| `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
+| `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city` or `asn`) is loaded, 0 while lines go without its data |
+| `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |
+
+Bot and feed reader names come from the crawler list, so their label sets
+are bounded. While `enabled` is off, no request is counted, as no line is
+written.
 
 ### Settings
 
 Site Statistics read their settings, the `StatsConfig`, on every request, so
-a change applies at once. For now goblog always uses the defaults:
+a change applies at once, with no restart or redeploy. The `StatsConfig` is a
+[Mimir](https://github.com/worldtree-industries/mimir) Config,
+`github.com/dfryer1193/goblog/stats.StatsConfig` (shown as "Site
+Statistics"), defined in [`stats/stats_config.json`](stats/stats_config.json).
+Change its Items with Mimir Overrides for Deployable `goblog`:
 
-| Setting   | Meaning                                                          | Default |
-| --------- | ---------------------------------------------------------------- | ------- |
-| `enabled` | Whether Site Statistics are on. Off, no lines are written and no metrics counted; the site is served as usual | `true` |
+| Item                | Type         | Meaning | Default |
+| ------------------- | ------------ | ------- | ------- |
+| `excluded_networks` | `string_set` | CIDRs, such as `203.0.113.0/24` or `2001:db8::/48`, whose requests emit nothing at all: no lines and no metrics. Use it for your own networks, so reading your own Posts doesn't count. It's checked against the client IP before anything else, so even a Bot or feed reader there emits nothing. An entry that isn't a CIDR is skipped with a warning (once, not on every request) giving its position in the list, sorted, and why, but never its text; the rest still apply | empty |
+| `enabled`           | `bool`       | Whether Site Statistics are on. Off, they stop both: no lines are written and no metrics count anything; the site is served as usual | `true` |
 
-`goblog build` doesn't count anything.
+Keep your networks in Mimir, not in the Content Repository, so they're never
+published.
+
+Only serve mode starts Mimir's client; `goblog build` never does, and doesn't
+count anything. The client needs this environment (see Mimir's README for
+the rest, such as `MIMIR_POLL_INTERVAL`):
+
+| Variable | Meaning |
+| -------- | ------- |
+| `MIMIR_ENVIRONMENT` | The Environment: `dev`, `staging` or `prod`. Required for anything but the defaults |
+| `MIMIR_DEPLOYABLE` | The Deployable. Leave it unset: it defaults to `goblog`, from the binary's main package |
+| `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | The object storage Mimir publishes Snapshots to, read from bucket `mimir-<environment>`. goblog needs read-only access |
+| `MIMIR_SERVER_URL` | mimir-server, which goblog registers its Config with. Default: `http://mimir-server.mimir-config` |
+
+Without `MIMIR_ENVIRONMENT` or object storage, goblog logs why and runs on
+the defaults. If object storage doesn't answer, it keeps its last values (the
+defaults, at a cold start) and picks the real ones up at a later poll. On a
+cold start the client waits up to 5 seconds for its first read, in the
+background: goblog serves straight away, on the defaults until then.
+
+After changing `stats/stats_config.json`, regenerate its Go code with
+`go generate ./stats`.
 
 ## Development
 
@@ -351,3 +582,9 @@ The code follows Ivaldi's layers, and lint enforces which may import which:
 ## Licence
 
 See [LICENSE](LICENSE).
+
+IP geolocation by [DB-IP](https://db-ip.com), under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): see
+[Location](#location) and [Network](#network). The hosting-network list is
+from [ipverse/as-metadata](https://github.com/ipverse/as-metadata), under
+CC0 1.0: see [`stats/networks`](stats/networks/ORIGIN.md).

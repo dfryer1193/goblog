@@ -170,7 +170,8 @@ func (c *testClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// statsOutput captures the Site Statistics JSON lines goblog writes.
+// statsOutput captures the Site Statistics JSON lines goblog writes, or what
+// Site Statistics log.
 type statsOutput struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -198,6 +199,22 @@ func (o *statsOutput) lines() []string {
 type fakeStatsConfig struct {
 	mu       sync.Mutex
 	disabled bool
+	excluded []string
+}
+
+// ExcludedNetworks are the CIDRs whose requests emit nothing. There are
+// none by default.
+func (c *fakeStatsConfig) ExcludedNetworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.excluded
+}
+
+// setExcludedNetworks replaces the excluded networks with cidrs.
+func (c *fakeStatsConfig) setExcludedNetworks(cidrs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.excluded = cidrs
 }
 
 // Enabled reports whether Site Statistics are on. They are by default.
@@ -227,13 +244,20 @@ type goblog struct {
 	statsConfig *fakeStatsConfig
 	// metrics serves goblog's metrics handler, as its metrics port does.
 	metrics *httptest.Server
+	// saltFile is the salt file's path (GOBLOG_STATS_SALT_FILE), which
+	// startGoblog writes testSalt to.
+	saltFile string
+	// statsLog captures what Site Statistics log.
+	statsLog *statsOutput
 }
 
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
 // GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
-// directory and GOBLOG_WEBHOOK_SECRET webhookSecret. The clock starts at startTime. goblog hasn't synced yet: call
-// sync.
+// directory, GOBLOG_WEBHOOK_SECRET webhookSecret, GOBLOG_STATS_CITY_DB_URL
+// a databaseServer releasing geoLite2City every month and
+// GOBLOG_STATS_ASN_DB_URL one releasing geoLite2ASN. The clock starts at
+// startTime. goblog hasn't synced yet: call sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
 	return startGoblogWritingStatsTo(t, repo, env, nil)
@@ -244,10 +268,23 @@ func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog
 func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]string, output io.Writer) *goblog {
 	t.Helper()
 	workDir := t.TempDir()
+	saltFile := filepath.Join(t.TempDir(), "salt")
+	writeFile(t, saltFile, testSalt)
 	vars := map[string]string{
-		"GOBLOG_CONTENT_URL":    repo.url(),
-		"GOBLOG_WORK_DIR":       workDir,
-		"GOBLOG_WEBHOOK_SECRET": webhookSecret,
+		"GOBLOG_CONTENT_URL":     repo.url(),
+		"GOBLOG_WORK_DIR":        workDir,
+		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
+		"GOBLOG_STATS_SALT_FILE": saltFile,
+	}
+	if _, ok := env[cityEnv]; !ok {
+		databases := newDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2City)
+		maps.Copy(vars, databases.env())
+	}
+	if _, ok := env[asnEnv]; !ok {
+		databases := newASNDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2ASN)
+		maps.Copy(vars, databases.env())
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -266,11 +303,14 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	}
 	statsConfig := &fakeStatsConfig{}
 	cfg.StatsConfig = statsConfig
+	statsLog := &statsOutput{}
+	cfg.StatsLog = statsLog
 
 	a, err := app.New(cfg)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
+	t.Cleanup(a.Close)
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
 	metrics := httptest.NewServer(a.MetricsHandler())
@@ -283,6 +323,54 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		stats:       captured,
 		statsConfig: statsConfig,
 		metrics:     metrics,
+		saltFile:    cfg.StatsSaltFile,
+		statsLog:    statsLog,
+	}
+}
+
+// finishRecording stops goblog's Site Statistics, once they've recorded
+// every request served so far and written every line. Requests are recorded
+// in the background, and not always in the order they were served: a file's
+// response can be sent before its handler returns.
+func (g *goblog) finishRecording() {
+	g.app.Close()
+}
+
+// writeSalt replaces the salt file's contents with salt, as the daily
+// rotation does.
+func (g *goblog) writeSalt(t *testing.T, salt string) {
+	t.Helper()
+	writeFile(t, g.saltFile, salt)
+}
+
+// removeSalt deletes the salt file.
+func (g *goblog) removeSalt(t *testing.T) {
+	t.Helper()
+	if err := os.Remove(g.saltFile); err != nil {
+		t.Fatalf("removing the salt file: %v", err)
+	}
+}
+
+// statsWarnings are the warnings Site Statistics have logged so far.
+func (g *goblog) statsWarnings() []string {
+	var warnings []string
+	for _, line := range g.statsLog.lines() {
+		// Each record is logged as text and as JSON; count the text.
+		if strings.Contains(line, " level=WARN ") {
+			warnings = append(warnings, line)
+		}
+	}
+	return warnings
+}
+
+// testSalt is the salt startGoblog writes to the salt file: 32 bytes.
+const testSalt = "test-salt-0123456789abcdefghijkl"
+
+// writeFile writes content to path, replacing it.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }
 
@@ -290,6 +378,22 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 // of the sample name{labels}, such as goblog_page_views_total{kind="post"},
 // or 0 if there's no such sample.
 func (g *goblog) metric(t *testing.T, sample string) float64 {
+	t.Helper()
+	for line := range strings.Lines(g.metricsBody(t)) {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
+			f, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
+			}
+			return f
+		}
+	}
+	return 0
+}
+
+// metricsBody scrapes goblog's metrics handler at /metrics and returns what
+// it serves.
+func (g *goblog) metricsBody(t *testing.T) string {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.metrics.URL+"/metrics", http.NoBody)
 	if err != nil {
@@ -307,16 +411,33 @@ func (g *goblog) metric(t *testing.T, sample string) float64 {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /metrics status = %d; body:\n%s", resp.StatusCode, body)
 	}
-	for line := range strings.Lines(string(body)) {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
-			f, parseErr := strconv.ParseFloat(value, 64)
-			if parseErr != nil {
-				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
+	return string(body)
+}
+
+// assertMetrics fails the test unless each of want's samples has its value
+// within 5 seconds. Site Statistics record a request in the background, so
+// a scrape right after a response may not count it yet.
+func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		wrong := map[string]float64{}
+		for sample, value := range want {
+			if got := g.metric(t, sample); got != value {
+				wrong[sample] = got
 			}
-			return f
 		}
+		if len(wrong) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for sample, got := range wrong {
+				t.Errorf("%s = %v, want %v", sample, got, want[sample])
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return 0
 }
 
 // statsLines waits for goblog to have written n Site Statistics lines, and
@@ -386,15 +507,21 @@ func (g *goblog) get(t *testing.T, path string) response {
 	return g.request(t, http.MethodGet, path, nil)
 }
 
+// browserUserAgent is the User-Agent requests send unless they set their
+// own, so that they're a Visitor's, not a Bot's.
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+
 // request sends a method request for path to goblog with header added.
 // Redirects aren't followed, and the body isn't decompressed: no
-// Accept-Encoding is sent unless header has one.
+// Accept-Encoding is sent unless header has one. The User-Agent is a
+// browser's unless header has one; an empty one sends none.
 func (g *goblog) request(t *testing.T, method, path string, header http.Header) response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, g.srv.URL+path, http.NoBody)
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}
+	req.Header.Set("User-Agent", browserUserAgent)
 	maps.Copy(req.Header, header)
 	transport, ok := g.srv.Client().Transport.(*http.Transport)
 	if !ok {

@@ -61,3 +61,37 @@ func TestMetricsPortComesFromTheEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCityDatabaseURLComesFromTheEnvironmentOrIsDBIPs(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]string{
+		"":                               "https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz",
+		"https://example.com/{YYYY}{MM}": "https://example.com/{YYYY}{MM}",
+	} {
+		cfg, err := configFrom(map[string]string{"GOBLOG_STATS_CITY_DB_URL": value})
+		if err != nil {
+			t.Fatalf("GOBLOG_STATS_CITY_DB_URL=%q: %v", value, err)
+		}
+		if cfg.StatsCityDatabaseURL != want {
+			t.Errorf("GOBLOG_STATS_CITY_DB_URL=%q: StatsCityDatabaseURL = %q, want %q",
+				value, cfg.StatsCityDatabaseURL, want)
+		}
+	}
+}
+
+func TestTheASNDatabaseURLComesFromTheEnvironmentOrIsDBIPs(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]string{
+		"":                               "https://download.db-ip.com/free/dbip-asn-lite-{YYYY}-{MM}.mmdb.gz",
+		"https://example.com/{YYYY}{MM}": "https://example.com/{YYYY}{MM}",
+	} {
+		cfg, err := configFrom(map[string]string{"GOBLOG_STATS_ASN_DB_URL": value})
+		if err != nil {
+			t.Fatalf("GOBLOG_STATS_ASN_DB_URL=%q: %v", value, err)
+		}
+		if cfg.StatsASNDatabaseURL != want {
+			t.Errorf("GOBLOG_STATS_ASN_DB_URL=%q: StatsASNDatabaseURL = %q, want %q",
+				value, cfg.StatsASNDatabaseURL, want)
+		}
+	}
+}

@@ -7,22 +7,25 @@ import (
 	"github.com/dfryer1193/goblog/models"
 )
 
+// kind is the kind of page a request is for, such as kindPost.
+type kind string
+
 // The kinds of page a request can be for.
 const (
-	kindPost    = "post"
-	kindPage    = "page"
-	kindIndex   = "index"
-	kindTag     = "tag"
-	kindImage   = "image"
-	kindAsset   = "asset"
-	kindFeed    = "feed"
-	kindSitemap = "sitemap"
-	kindMissing = "missing"
-	kindOther   = "other"
+	kindPost    kind = "post"
+	kindPage    kind = "page"
+	kindIndex   kind = "index"
+	kindTag     kind = "tag"
+	kindImage   kind = "image"
+	kindAsset   kind = "asset"
+	kindFeed    kind = "feed"
+	kindSitemap kind = "sitemap"
+	kindMissing kind = "missing"
+	kindOther   kind = "other"
 )
 
 // kindOf is the kind of page at urlPath, answered with status.
-func kindOf(urlPath string, status int) string {
+func kindOf(urlPath string, status int) kind {
 	if status == http.StatusNotFound {
 		return kindMissing
 	}
@@ -58,28 +61,23 @@ func isFolder(rest string) bool {
 	return ok && name != "" && !strings.Contains(name, "/")
 }
 
-// isHTMLPage reports whether kind is a kind of HTML page.
-func isHTMLPage(kind string) bool {
-	return kind == kindPost || kind == kindPage || kind == kindIndex || kind == kindTag
+// isHTMLPage reports whether k is a kind of HTML page.
+func isHTMLPage(k kind) bool {
+	return k == kindPost || k == kindPage || k == kindIndex || k == kindTag
 }
 
-// isPageView reports whether r, for a page of kind answered with status, is
-// a Page View: a GET that isn't a prefetch, for an HTML page, answered 200
-// or 304.
-func isPageView(r *http.Request, kind string, status int) bool {
-	return r.Method == http.MethodGet &&
-		!isPrefetch(r) &&
-		isHTMLPage(kind) &&
-		(status == http.StatusOK || status == http.StatusNotModified)
+// isPageView reports whether req is a Page View: a GET that isn't a
+// prefetch, for an HTML page, answered 200 or 304.
+func (req request) isPageView() bool {
+	return req.method == http.MethodGet &&
+		!req.isPrefetch() &&
+		isHTMLPage(req.kind) &&
+		(req.status == http.StatusOK || req.status == http.StatusNotModified)
 }
 
-// isPrefetch reports whether r is a browser's prefetch (or prerender), as
-// its Sec-Purpose or Purpose header says.
-func isPrefetch(r *http.Request) bool {
-	for _, header := range []string{"Sec-Purpose", "Purpose"} {
-		if strings.Contains(strings.ToLower(r.Header.Get(header)), "prefetch") {
-			return true
-		}
-	}
-	return false
+// isVisitorNotFound reports whether req, a Visitor's request, is a Visitor
+// 404: a GET that isn't a prefetch, answered with the 404 page. Like a Page
+// View, a HEAD isn't one.
+func (req request) isVisitorNotFound() bool {
+	return req.method == http.MethodGet && !req.isPrefetch() && req.kind == kindMissing
 }
