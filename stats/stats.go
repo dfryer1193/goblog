@@ -273,12 +273,18 @@ func (s *Stats) Close() {
 		close(s.stop)
 		waitUntil(s.stopped, deadline)
 		s.lines.close(deadline)
-		for _, db := range []*database{s.city, s.asn} {
-			if db != nil {
-				db.close()
-			}
-		}
+		s.eachDatabase((*database).close)
 	})
+}
+
+// eachDatabase calls f with each database there is: the City database and
+// the ASN database, unless they're off.
+func (s *Stats) eachDatabase(f func(*database)) {
+	for _, db := range []*database{s.city, s.asn} {
+		if db != nil {
+			f(db)
+		}
+	}
 }
 
 // Wrap returns next with Site Statistics around it: every request next
@@ -331,11 +337,7 @@ func (s *Stats) recordQueued() {
 // record emits what Site Statistics learn from req. Each request is in one
 // class, checked in order: Excluded first, ahead of every other class.
 func (s *Stats) record(req request) {
-	for _, db := range []*database{s.city, s.asn} {
-		if db != nil {
-			db.refresh()
-		}
-	}
+	s.eachDatabase((*database).refresh)
 	ip := req.clientIP()
 	// Excluded: a request from an excluded network emits nothing at all,
 	// neither a line nor a metric.

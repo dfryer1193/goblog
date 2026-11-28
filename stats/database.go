@@ -118,10 +118,7 @@ func newDatabase(cfg databaseConfig) *database {
 // databaseRetryInterval. It never waits.
 func (d *database) refresh() {
 	now := d.cfg.Now()
-	d.mu.RLock()
-	current := d.month == now.UTC().Format(monthLayout)
-	d.mu.RUnlock()
-	if current {
+	if d.loadedMonth() == now.UTC().Format(monthLayout) {
 		return
 	}
 	d.attemptMu.Lock()
@@ -146,9 +143,7 @@ func (d *database) update(now time.Time) {
 	month := now.UTC().Format(monthLayout)
 	firstOfMonth := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 	previous := firstOfMonth.AddDate(0, -1, 0).Format(monthLayout)
-	d.mu.RLock()
-	loaded := d.month
-	d.mu.RUnlock()
+	loaded := d.loadedMonth()
 
 	err := d.load(month)
 	if errors.Is(err, errNotReleased) && loaded != previous {
@@ -278,6 +273,24 @@ func (d *database) removeCopiesBut(keep string) {
 	}
 }
 
+// loadedMonth is the loaded copy's release month, such as "2026-03", or ""
+// if none is loaded.
+func (d *database) loadedMonth() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.month
+}
+
+// name names the database, as in its metrics' database label.
+func (d *database) name() string {
+	return d.cfg.Name
+}
+
+// now is the time by the database's clock.
+func (d *database) now() time.Time {
+	return d.cfg.Now()
+}
+
 // lookup decodes ip's record into v, and reports whether there is one.
 // Without a loaded copy, there isn't.
 func (d *database) lookup(ip netip.Addr, v any) bool {
@@ -322,7 +335,7 @@ type databaseCollector struct {
 
 // newDatabaseCollector is db's health metrics.
 func newDatabaseCollector(db *database) *databaseCollector {
-	labels := prometheus.Labels{"database": db.cfg.Name}
+	labels := prometheus.Labels{"database": db.name()}
 	return &databaseCollector{
 		db: db,
 		loaded: prometheus.NewDesc("goblog_stats_database_loaded",
@@ -341,9 +354,7 @@ func (c *databaseCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect sends whether the database is loaded, and its age if it is.
 func (c *databaseCollector) Collect(ch chan<- prometheus.Metric) {
-	c.db.mu.RLock()
-	month := c.db.month
-	c.db.mu.RUnlock()
+	month := c.db.loadedMonth()
 	if month == "" {
 		ch <- prometheus.MustNewConstMetric(c.loaded, prometheus.GaugeValue, 0)
 		return
@@ -353,5 +364,5 @@ func (c *databaseCollector) Collect(ch chan<- prometheus.Metric) {
 	if err != nil {
 		return
 	}
-	ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue, c.db.cfg.Now().Sub(released).Seconds())
+	ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue, c.db.now().Sub(released).Seconds())
 }
