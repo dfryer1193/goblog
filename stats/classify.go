@@ -7,22 +7,25 @@ import (
 	"github.com/dfryer1193/goblog/models"
 )
 
+// kind is the kind of page a request is for, such as kindPost.
+type kind string
+
 // The kinds of page a request can be for.
 const (
-	kindPost    = "post"
-	kindPage    = "page"
-	kindIndex   = "index"
-	kindTag     = "tag"
-	kindImage   = "image"
-	kindAsset   = "asset"
-	kindFeed    = "feed"
-	kindSitemap = "sitemap"
-	kindMissing = "missing"
-	kindOther   = "other"
+	kindPost    kind = "post"
+	kindPage    kind = "page"
+	kindIndex   kind = "index"
+	kindTag     kind = "tag"
+	kindImage   kind = "image"
+	kindAsset   kind = "asset"
+	kindFeed    kind = "feed"
+	kindSitemap kind = "sitemap"
+	kindMissing kind = "missing"
+	kindOther   kind = "other"
 )
 
 // kindOf is the kind of page at urlPath, answered with status.
-func kindOf(urlPath string, status int) string {
+func kindOf(urlPath string, status int) kind {
 	if status == http.StatusNotFound {
 		return kindMissing
 	}
@@ -58,9 +61,9 @@ func isFolder(rest string) bool {
 	return ok && name != "" && !strings.Contains(name, "/")
 }
 
-// isHTMLPage reports whether kind is a kind of HTML page.
-func isHTMLPage(kind string) bool {
-	return kind == kindPost || kind == kindPage || kind == kindIndex || kind == kindTag
+// isHTMLPage reports whether k is a kind of HTML page.
+func isHTMLPage(k kind) bool {
+	return k == kindPost || k == kindPage || k == kindIndex || k == kindTag
 }
 
 // isPageView reports whether req is a Page View: a GET that isn't a

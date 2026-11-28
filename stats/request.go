@@ -34,7 +34,7 @@ type request struct {
 	// status is the response's status code.
 	status int
 	// kind is the kind of page served.
-	kind string
+	kind kind
 }
 
 // snapshot is the part of r that Site Statistics record, as it arrives at

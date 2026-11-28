@@ -346,45 +346,34 @@ func (s *Stats) record(req request) {
 		return
 	}
 	if bot, ok := s.bot(req.userAgent); ok {
-		s.botRequests.WithLabelValues(bot, statusClass(req.status), req.kind).Inc()
+		s.botRequests.WithLabelValues(bot, statusClass(req.status), string(req.kind)).Inc()
 		asNet := networkOf(s.asn, ip)
-		s.emit(line{
-			Time: req.at, Class: classBot, Path: req.path, Status: req.status, Kind: req.kind, Bot: bot,
-			ASN: asNet.asn, ASOrg: asNet.org,
-		})
+		l := req.baseLine(classBot)
+		l.Bot, l.ASN, l.ASOrg = bot, asNet.asn, asNet.org
+		s.emit(l)
 		return
 	}
 	switch {
 	case req.isPageView():
-		s.pageViews.WithLabelValues(req.kind).Inc()
+		s.pageViews.WithLabelValues(string(req.kind)).Inc()
 		s.emit(s.visitorLine(req, ip, classPageView))
 	case req.isVisitorNotFound():
 		s.visitorNotFound.Inc()
 		s.emit(s.visitorLine(req, ip, classNotFound))
 	default:
-		s.others.WithLabelValues(req.kind).Inc()
+		s.others.WithLabelValues(string(req.kind)).Inc()
 	}
 }
 
-// visitorLine is the line of class for req, a Visitor's request from ip:
+// visitorLine is req's line, of class c, for a Visitor's request from ip:
 // it carries the Visitor fields, which Page Views and Visitor 404s share.
-func (s *Stats) visitorLine(req request, ip netip.Addr, class string) line {
+func (s *Stats) visitorLine(req request, ip netip.Addr, c class) line {
 	loc := locationOf(s.city, ip)
 	asNet := networkOf(s.asn, ip)
 	f := familiesOf(s.userAgents, req.userAgent)
-	l := line{
-		Time:         req.at,
-		Class:        class,
-		Path:         req.path,
-		Status:       req.status,
-		Kind:         req.kind,
-		Browser:      f.browser,
-		BrowserMajor: f.browserMajor,
-		OS:           f.os,
-		Device:       f.device,
-		Country:      loc.country,
-		Region:       loc.region,
-	}
+	l := req.baseLine(c)
+	l.Browser, l.BrowserMajor, l.OS, l.Device = f.browser, f.browserMajor, f.os, f.device
+	l.Country, l.Region = loc.country, loc.region
 	// The network itself is never on a Visitor's line: only whether it's a
 	// hosting network.
 	if asNet.asn != 0 {
@@ -420,10 +409,9 @@ func (s *Stats) recordFeedFetch(req request) bool {
 	if reader.subscribers != nil {
 		s.setSubscribers(reader.name, req.at, *reader.subscribers)
 	}
-	s.emit(line{
-		Time: req.at, Class: classFeedFetch, Path: req.path, Status: req.status, Kind: kindFeed,
-		Reader: reader.name, Subscribers: reader.subscribers,
-	})
+	l := req.baseLine(classFeedFetch)
+	l.Reader, l.Subscribers = reader.name, reader.subscribers
+	s.emit(l)
 	return true
 }
 
