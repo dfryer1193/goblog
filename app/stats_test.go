@@ -1,9 +1,11 @@
 package app_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -95,18 +97,21 @@ func TestRequestsThatArentPageViewsEmitNoLine(t *testing.T) {
 		{"asset", http.MethodGet, asset, nil},
 		{"feed", http.MethodGet, "/feed.xml", nil},
 		{"sitemap", http.MethodGet, "/sitemap.xml", nil},
-		{"404", http.MethodGet, "/nope/", nil},
+		{"HEAD 404", http.MethodHead, "/nope/", nil},
+		{"prefetched 404", http.MethodGet, "/nope/", http.Header{"Sec-Purpose": {"prefetch"}}},
 	} {
 		resp := g.request(t, tc.method, tc.path, tc.header)
 		if resp.status >= http.StatusInternalServerError {
 			t.Fatalf("%s: %s %s status = %d", tc.name, tc.method, tc.path, resp.status)
 		}
 	}
-	// Lines are written in order, so once this Page View's line is out,
-	// any line for the requests above would be too.
 	g.get(t, "/about/")
+	g.finishRecording()
 
 	lines := g.statsLines(t, 2)
+	slices.SortFunc(lines, func(a, b map[string]any) int {
+		return strings.Compare(fmt.Sprint(a["path"]), fmt.Sprint(b["path"]))
+	})
 	assertPageView(t, lines[0], "/", "index")
 	assertPageView(t, lines[1], "/about/", "page")
 }
@@ -132,7 +137,8 @@ func TestMetricsCountPageViewsAndOtherRequestsByKindOfPage(t *testing.T) {
 		g.get(t, path)
 	}
 	g.request(t, http.MethodHead, "/posts/hello/", nil)
-	for _, path := range []string{"/images/cat.png", asset, "/feed.xml", "/sitemap.xml", "/nope/", "/posts/hello"} {
+	g.request(t, http.MethodHead, "/nope/", nil)
+	for _, path := range []string{"/images/cat.png", asset, "/feed.xml", "/sitemap.xml", "/posts/hello"} {
 		g.get(t, path)
 	}
 

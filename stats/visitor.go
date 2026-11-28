@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -40,16 +41,19 @@ const minSaltBytes = 32
 // salt is the daily salt for Visitor IDs, from a file that's replaced at
 // 00:00 UTC. It's reread at most every saltCheckInterval, so a new salt
 // applies without a restart. goblog never makes one up: without a usable
-// salt file, there are no Visitor IDs.
+// salt file, there are no Visitor IDs. Only the recorder rereads it, so a
+// slow read never holds up serving a request.
 type salt struct {
 	path   string
 	now    func() time.Time
 	logger *slog.Logger
 	loaded prometheus.Gauge
+	// key is the salt, or nil if there's none. It's replaced, never
+	// changed, so it's read without a lock.
+	key atomic.Pointer[[]byte]
 
+	// mu serialises rereading, and guards problem and checked.
 	mu sync.Mutex
-	// key is the salt, or nil if there's none.
-	key []byte
 	// problem is why there's no salt, or "" if there is one. A warning is
 	// logged whenever it changes to a new problem.
 	problem string
@@ -66,27 +70,32 @@ func newSalt(path string, now func() time.Time, logger *slog.Logger, loaded prom
 	return s
 }
 
-// current is the salt now, or nil if there's none.
+// current is the salt now, or nil if there's none. It rereads the salt
+// file if it's due.
 func (s *salt) current() []byte {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if now := s.now(); now.Sub(s.checked) >= saltCheckInterval || now.Before(s.checked) {
 		s.reload(now)
 	}
-	return s.key
+	s.mu.Unlock()
+	if key := s.key.Load(); key != nil {
+		return *key
+	}
+	return nil
 }
 
-// reload rereads the salt file at now.
+// reload rereads the salt file at now. The caller holds mu.
 func (s *salt) reload(now time.Time) {
 	s.checked = now
 	key, problem := s.read()
-	s.key = key
 	if key != nil {
+		s.key.Store(&key)
 		s.loaded.Set(1)
 		if s.problem != "" {
 			s.logger.Info("Loaded the salt for Visitor IDs", "file", s.path)
 		}
 	} else {
+		s.key.Store(nil)
 		s.loaded.Set(0)
 		if problem != s.problem {
 			s.logger.Warn("Page Views have no Visitor ID: "+problem, "file", s.path)

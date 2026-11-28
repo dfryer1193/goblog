@@ -41,6 +41,10 @@ _Avoid_: user, unique, session
 One request by a Visitor for a page of the site.
 _Avoid_: hit, view
 
+**Visitor 404**:
+A Visitor's request for a path the site doesn't have, answered with the 404 page. It's never a Page View, and a Bot's request for a missing path is never one.
+_Avoid_: broken link, 404 hit
+
 **Source**:
 Where a Visitor came from: a referring site (grouped, so every Hacker News URL is one Source), a search engine, or a Campaign. A Visitor who arrives with neither a referrer nor a Campaign has no Source; they came direct.
 _Avoid_: referrer, referer, origin
