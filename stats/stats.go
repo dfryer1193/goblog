@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
@@ -111,6 +112,11 @@ type Stats struct {
 	// feedSubscribers is the latest subscriber count each feed reader
 	// reported.
 	feedSubscribers *prometheus.GaugeVec
+	// subscribersMu guards subscribersAt.
+	subscribersMu sync.Mutex
+	// subscribersAt is when the fetch arrived whose count feedSubscribers
+	// holds, by feed reader.
+	subscribersAt map[string]time.Time
 	// visitorNotFound counts Visitor 404s.
 	visitorNotFound prometheus.Counter
 	// others counts the requests that are none of the other classes, by
@@ -124,7 +130,13 @@ func New(cfg Config) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading the search-engine and social list: %w", err)
 	}
-	s := &Stats{settings: cfg.Settings, now: cfg.Now, siteURL: cfg.SiteURL, sources: sources}
+	s := &Stats{
+		settings:      cfg.Settings,
+		now:           cfg.Now,
+		siteURL:       cfg.SiteURL,
+		sources:       sources,
+		subscribersAt: map[string]time.Time{},
+	}
 	if s.settings == nil {
 		s.settings = Defaults()
 	}
@@ -230,16 +242,17 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		at := s.now().UTC()
 		ww := middleware.NewResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
-		s.record(r, ww.Status())
+		s.record(r, at, ww.Status())
 	})
 }
 
-// record emits what Site Statistics learn from a request answered with
-// status. Each request is in one class, checked in order: Excluded first,
+// record emits what Site Statistics learn from a request that arrived at
+// at and was answered with status. Each request is in one class, checked in order: Excluded first,
 // ahead of every other class.
-func (s *Stats) record(r *http.Request, status int) {
+func (s *Stats) record(r *http.Request, at time.Time, status int) {
 	for _, db := range []*database{s.city, s.asn} {
 		if db != nil {
 			db.refresh()
@@ -251,14 +264,14 @@ func (s *Stats) record(r *http.Request, status int) {
 		return
 	}
 	kind := kindOf(r.URL.Path, status)
-	if kind == kindFeed && s.recordFeedFetch(r, status) {
+	if kind == kindFeed && s.recordFeedFetch(r, at, status) {
 		return
 	}
 	if bot, ok := s.bot(r.UserAgent()); ok {
 		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
 		asNet := networkOf(s.asn, clientIP(r))
 		s.emit(line{
-			Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot,
+			Time: at, Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot,
 			ASN: asNet.asn, ASOrg: asNet.org,
 		})
 		return
@@ -266,25 +279,25 @@ func (s *Stats) record(r *http.Request, status int) {
 	switch {
 	case isPageView(r, kind, status):
 		s.pageViews.WithLabelValues(kind).Inc()
-		s.emit(s.visitorLine(r, classPageView, kind, status))
+		s.emit(s.visitorLine(r, at, classPageView, kind, status))
 	case isVisitorNotFound(r, kind):
 		s.visitorNotFound.Inc()
-		s.emit(s.visitorLine(r, classNotFound, kind, status))
+		s.emit(s.visitorLine(r, at, classNotFound, kind, status))
 	default:
 		s.others.WithLabelValues(kind).Inc()
 	}
 }
 
-// visitorLine is the line of class for a Visitor's request r, for a page of
-// kind answered with status: it carries the Visitor fields, which Page Views
+// visitorLine is the line of class for a Visitor's request r, which arrived
+// at at, for a page of kind answered with status: it carries the Visitor fields, which Page Views
 // and Visitor 404s share.
-func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) line {
+func (s *Stats) visitorLine(r *http.Request, at time.Time, class, kind string, status int) line {
 	ip := clientIP(r)
 	loc := locationOf(s.city, ip)
 	asNet := networkOf(s.asn, ip)
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
-		Time:         s.now().UTC(),
+		Time:         at,
 		Class:        class,
 		Path:         r.URL.Path,
 		Status:       status,
@@ -320,22 +333,36 @@ func (s *Stats) siteHost() string {
 	return hostOf(u.Host)
 }
 
-// recordFeedFetch emits r, a request for the feed answered with status, as
-// a feed fetch if a known feed reader sent it, and reports whether it did.
-func (s *Stats) recordFeedFetch(r *http.Request, status int) bool {
+// recordFeedFetch emits r, a request for the feed that arrived at at and
+// was answered with status, as a feed fetch if a known feed reader sent it,
+// and reports whether it did.
+func (s *Stats) recordFeedFetch(r *http.Request, at time.Time, status int) bool {
 	reader, ok := s.readers.match(r.UserAgent())
 	if !ok {
 		return false
 	}
 	s.feedFetches.WithLabelValues(reader.name).Inc()
 	if reader.subscribers != nil {
-		s.feedSubscribers.WithLabelValues(reader.name).Set(float64(*reader.subscribers))
+		s.setSubscribers(reader.name, at, *reader.subscribers)
 	}
 	s.emit(line{
-		Time: s.now().UTC(), Class: classFeedFetch, Path: r.URL.Path, Status: status, Kind: kindFeed,
+		Time: at, Class: classFeedFetch, Path: r.URL.Path, Status: status, Kind: kindFeed,
 		Reader: reader.name, Subscribers: reader.subscribers,
 	})
 	return true
+}
+
+// setSubscribers sets reader's subscriber count to n, reported by a fetch
+// that arrived at at, unless a later fetch's count is already set: fetches
+// can be recorded out of order.
+func (s *Stats) setSubscribers(reader string, at time.Time, n int) {
+	s.subscribersMu.Lock()
+	defer s.subscribersMu.Unlock()
+	if last, ok := s.subscribersAt[reader]; ok && !at.After(last) {
+		return
+	}
+	s.subscribersAt[reader] = at
+	s.feedSubscribers.WithLabelValues(reader).Set(float64(n))
 }
 
 // bot is the Bot name of a request with userAgent, if it's a Bot's.

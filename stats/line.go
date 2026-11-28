@@ -23,7 +23,7 @@ const (
 type line struct {
 	// Stream is always streamMarker.
 	Stream string `json:"stream"`
-	// Time is when the request was answered, in UTC.
+	// Time is when the request arrived, in UTC.
 	Time time.Time `json:"time"`
 	// Class is the request's class, such as classPageView.
 	Class string `json:"class"`

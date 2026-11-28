@@ -313,7 +313,7 @@ contract: later versions only add fields.
 | Field    | Meaning                                                           |
 | -------- | ----------------------------------------------------------------- |
 | `stream` | Always `goblog_stats`. Select Site Statistics lines by this field |
-| `time`   | When the request was answered: RFC 3339, in UTC                   |
+| `time`   | When the request arrived: RFC 3339, in UTC                        |
 | `class`  | The class of request: `page_view`, `not_found` (a Visitor 404), `bot` or `feed_fetch` |
 | `path`   | The request's path, without its query string                      |
 | `status` | The response's status code                                        |
