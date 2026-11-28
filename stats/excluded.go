@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"slices"
@@ -63,12 +64,15 @@ func (e *excludedNetworks) prefixesOf(raw []string) []netip.Prefix {
 		return p.prefixes
 	}
 	p := &parsedNetworks{raw: slices.Clone(raw)}
-	for _, entry := range raw {
+	for i, entry := range raw {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(entry))
 		if err != nil {
+			// The warning says which entry it is by its position, never
+			// its text, which may be the author's own network.
 			if !e.warned[entry] {
 				e.warned[entry] = true
-				e.logger.Warn("Skipping an excluded network that isn't a CIDR", "entry", entry, "error", err)
+				e.logger.Warn(fmt.Sprintf("excluded_networks entry %d isn't a valid CIDR: %s; skipping it",
+					i+1, whyNotCIDR(entry)))
 			}
 			continue
 		}
@@ -76,4 +80,27 @@ func (e *excludedNetworks) prefixesOf(raw []string) []netip.Prefix {
 	}
 	e.parsed.Store(p)
 	return p.prefixes
+}
+
+// whyNotCIDR says why entry, which [netip.ParsePrefix] rejected, isn't a CIDR,
+// without saying what's in it.
+func whyNotCIDR(entry string) string {
+	addr, bits, ok := strings.Cut(strings.TrimSpace(entry), "/")
+	switch {
+	case !ok:
+		return "it has no /prefix length"
+	case !isAddr(addr):
+		return "its address isn't an IP address"
+	case bits == "":
+		return "its prefix length is empty"
+	default:
+		return "its prefix length isn't one for its address"
+	}
+}
+
+// isAddr reports whether s is an IP address, without a zone (which a CIDR
+// can't have).
+func isAddr(s string) bool {
+	ip, err := netip.ParseAddr(s)
+	return err == nil && ip.Zone() == ""
 }

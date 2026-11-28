@@ -25,9 +25,8 @@ func TestRequestsFromAnExcludedNetworkEmitNoLinesOrMetrics(t *testing.T) {
 		assertContains(t, "/posts/hello/", resp.body, "Hello body.")
 		assertStatus(t, "/images/cat.png", g.getFrom(t, ip, "/images/cat.png"), http.StatusOK)
 	}
-	// Lines are written in order, so once this Page View's line is out,
-	// any line for the requests above would be too.
 	g.getFrom(t, "198.51.100.1", "/about/")
+	g.finishRecording()
 
 	lines := g.statsLines(t, 1)
 	assertPageView(t, lines[0], "/about/", "page")
@@ -75,9 +74,12 @@ func TestAnInvalidExcludedNetworkIsSkippedWithOneWarning(t *testing.T) {
 
 	lines := g.statsLines(t, 1)
 	assertPageView(t, lines[0], "/about/", "page")
+	// The warning says which entry it is by its position, never its text,
+	// which may be the author's network.
 	warnings := g.statsWarnings()
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "not-a-cidr") {
-		t.Fatalf("warnings = %q, want one naming not-a-cidr", warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "excluded_networks entry 1 isn't a valid CIDR") ||
+		strings.Contains(warnings[0], "not-a-cidr") {
+		t.Fatalf("warnings = %q, want one saying entry 1 isn't a valid CIDR, without its text", warnings)
 	}
 
 	// A new list warns about its new invalid entry, once, and not again
@@ -86,9 +88,11 @@ func TestAnInvalidExcludedNetworkIsSkippedWithOneWarning(t *testing.T) {
 	for range 3 {
 		g.getFrom(t, "203.0.113.7", "/posts/hello/")
 	}
+	g.finishRecording()
 	warnings = g.statsWarnings()
-	if len(warnings) != 2 || !strings.Contains(warnings[1], "203.0.113.0/33") {
-		t.Fatalf("warnings = %q, want a second naming 203.0.113.0/33", warnings)
+	if len(warnings) != 2 || !strings.Contains(warnings[1], "excluded_networks entry 2 isn't a valid CIDR") ||
+		strings.Contains(warnings[1], "203.0.113") {
+		t.Fatalf("warnings = %q, want a second saying entry 2 isn't a valid CIDR, without its text", warnings)
 	}
 }
 

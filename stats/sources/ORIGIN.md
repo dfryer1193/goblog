@@ -10,10 +10,11 @@ to name the search engines and social sites that Visitors come from.
 - **Licence:** CC0 1.0 Universal, in `LICENSE`. No attribution is required,
   but the origin is recorded here anyway.
 
-goblog reads only each entry's name and hosts. `SearchEngines.yml` and
-`AIAssistants.yml` entries are Sources of kind `search`, and `Socials.yml`
-entries are of kind `social`. Where a host is in more than one file, the
-first of `SearchEngines.yml`, `Socials.yml` and `AIAssistants.yml` wins.
+goblog reads only each entry's name and hosts. `SearchEngines.yml` entries
+are Sources of kind `search`, `Socials.yml` entries of kind `social`, and
+`AIAssistants.yml` entries of kind `ai`. Where a host is in more than one file, the
+first of `AIAssistants.yml`, `SearchEngines.yml` and `Socials.yml` wins, so
+an AI assistant the search engines list too, such as ChatGPT, is `ai`.
 
 ## Updating
 

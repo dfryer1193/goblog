@@ -254,8 +254,9 @@ type goblog struct {
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
 // GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
-// directory, GOBLOG_WEBHOOK_SECRET webhookSecret and GOBLOG_STATS_CITY_DB_URL
-// a databaseServer releasing geoLite2City every month. The clock starts at
+// directory, GOBLOG_WEBHOOK_SECRET webhookSecret, GOBLOG_STATS_CITY_DB_URL
+// a databaseServer releasing geoLite2City every month and
+// GOBLOG_STATS_ASN_DB_URL one releasing geoLite2ASN. The clock starts at
 // startTime. goblog hasn't synced yet: call sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
@@ -275,10 +276,15 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
 		"GOBLOG_STATS_SALT_FILE": saltFile,
 	}
-	if _, ok := env["GOBLOG_STATS_CITY_DB_URL"]; !ok {
+	if _, ok := env[cityEnv]; !ok {
 		databases := newDatabaseServer(t)
 		databases.releaseEveryMonth(t, geoLite2City)
-		vars["GOBLOG_STATS_CITY_DB_URL"] = databases.urlTemplate()
+		maps.Copy(vars, databases.env())
+	}
+	if _, ok := env[asnEnv]; !ok {
+		databases := newASNDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2ASN)
+		maps.Copy(vars, databases.env())
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -320,6 +326,14 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		saltFile:    cfg.StatsSaltFile,
 		statsLog:    statsLog,
 	}
+}
+
+// finishRecording stops goblog's Site Statistics, once they've recorded
+// every request served so far and written every line. Requests are recorded
+// in the background, and not always in the order they were served: a file's
+// response can be sent before its handler returns.
+func (g *goblog) finishRecording() {
+	g.app.Close()
 }
 
 // writeSalt replaces the salt file's contents with salt, as the daily
@@ -401,8 +415,8 @@ func (g *goblog) metricsBody(t *testing.T) string {
 }
 
 // assertMetrics fails the test unless each of want's samples has its value
-// within 5 seconds. Site Statistics count a request after its response is
-// written, so a scrape right after a response may not count it yet.
+// within 5 seconds. Site Statistics record a request in the background, so
+// a scrape right after a response may not count it yet.
 func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

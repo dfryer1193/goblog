@@ -25,6 +25,17 @@ const (
 	// geoIP2City is MaxMind's GeoIP2 City test database. Its data differs
 	// from geoLite2City's, so it can stand in for the next month's release.
 	geoIP2City = "GeoIP2-City-Test.mmdb"
+	// geoLite2ASN is MaxMind's GeoLite2 ASN test database.
+	geoLite2ASN = "GeoLite2-ASN-Test.mmdb"
+)
+
+// The databases goblog downloads: each one's name, in its URL, and the
+// environment variable for its URL template.
+const (
+	cityName = "city"
+	cityEnv  = "GOBLOG_STATS_CITY_DB_URL"
+	asnName  = "asn"
+	asnEnv   = "GOBLOG_STATS_ASN_DB_URL"
 )
 
 // testDatabase is the test database file's contents.
@@ -37,11 +48,15 @@ func testDatabase(t *testing.T, file string) []byte {
 	return b
 }
 
-// databaseServer serves monthly City database releases at
-// /city-YYYY-MM.mmdb.gz, gzipped, as DB-IP's download site does. A month
+// databaseServer serves a database's monthly releases at
+// /NAME-YYYY-MM.mmdb.gz, gzipped, as DB-IP's download site does. A month
 // without a release is 404.
 type databaseServer struct {
 	srv *httptest.Server
+	// name is the database's name, such as cityName.
+	name string
+	// envVar is the environment variable for its URL template.
+	envVar string
 
 	mu sync.Mutex
 	// releases are each month's database ("2026-03"), gzipped.
@@ -54,23 +69,38 @@ type databaseServer struct {
 	held chan struct{}
 }
 
-// newDatabaseServer starts a databaseServer with no releases.
+// newDatabaseServer starts a databaseServer for the City database, with no
+// releases.
 func newDatabaseServer(t *testing.T) *databaseServer {
 	t.Helper()
-	s := &databaseServer{releases: map[string][]byte{}}
+	return newDatabaseServerFor(t, cityName, cityEnv)
+}
+
+// newASNDatabaseServer starts a databaseServer for the ASN database, with
+// no releases.
+func newASNDatabaseServer(t *testing.T) *databaseServer {
+	t.Helper()
+	return newDatabaseServerFor(t, asnName, asnEnv)
+}
+
+// newDatabaseServerFor starts a databaseServer for the database name, whose
+// URL template is envVar, with no releases.
+func newDatabaseServerFor(t *testing.T, name, envVar string) *databaseServer {
+	t.Helper()
+	s := &databaseServer{name: name, envVar: envVar, releases: map[string][]byte{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.srv.Close)
 	return s
 }
 
-// urlTemplate is GOBLOG_STATS_CITY_DB_URL for this server.
+// urlTemplate is the database's URL template for this server.
 func (s *databaseServer) urlTemplate() string {
-	return s.srv.URL + "/city-{YYYY}-{MM}.mmdb.gz"
+	return s.srv.URL + "/" + s.name + "-{YYYY}-{MM}.mmdb.gz"
 }
 
-// env is startGoblog's env for downloading from this server.
+// env is startGoblog's env for downloading the database from this server.
 func (s *databaseServer) env() map[string]string {
-	return map[string]string{"GOBLOG_STATS_CITY_DB_URL": s.urlTemplate()}
+	return map[string]string{s.envVar: s.urlTemplate()}
 }
 
 // release publishes the test database file as month's release ("2026-03").
@@ -130,7 +160,7 @@ func (s *databaseServer) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failing", http.StatusInternalServerError)
 		return
 	}
-	month, ok := strings.CutPrefix(r.URL.Path, "/city-")
+	month, ok := strings.CutPrefix(r.URL.Path, "/"+s.name+"-")
 	month, ok2 := strings.CutSuffix(month, ".mmdb.gz")
 	db := s.releases[month]
 	if db == nil {
@@ -176,6 +206,18 @@ const cityLoaded = `goblog_stats_database_loaded{database="city"}`
 
 // cityAge is the sample saying how old the loaded City database is.
 const cityAge = `goblog_stats_database_age_seconds{database="city"}`
+
+// asnLoaded is the sample saying whether the ASN database is loaded.
+const asnLoaded = `goblog_stats_database_loaded{database="asn"}`
+
+// asnAge is the sample saying how old the loaded ASN database is.
+const asnAge = `goblog_stats_database_age_seconds{database="asn"}`
+
+// waitForASN waits until goblog has loaded an ASN database.
+func (g *goblog) waitForASN(t *testing.T) {
+	t.Helper()
+	g.waitForMetric(t, asnLoaded, 1)
+}
 
 // waitForCity waits until goblog has loaded a City database.
 func (g *goblog) waitForCity(t *testing.T) {

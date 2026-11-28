@@ -62,6 +62,10 @@ const (
 	// monthly release, with {YYYY} and {MM} for its year and month.
 	// Default: DB-IP's City Lite. A gzipped database is gunzipped.
 	EnvStatsCityDBURL = "GOBLOG_STATS_CITY_DB_URL"
+	// EnvStatsASNDBURL is the URL template of the network database's
+	// monthly release, with {YYYY} and {MM} for its year and month.
+	// Default: DB-IP's ASN Lite. A gzipped database is gunzipped.
+	EnvStatsASNDBURL = "GOBLOG_STATS_ASN_DB_URL"
 )
 
 // syncTimeout bounds each background sync, so a hung fetch can't hold up
@@ -119,6 +123,8 @@ type Config struct {
 	StatsSaltFile string
 	// StatsCityDatabaseURL is the location database's URL template.
 	StatsCityDatabaseURL string
+	// StatsASNDatabaseURL is the network database's URL template.
+	StatsASNDatabaseURL string
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
@@ -156,6 +162,7 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		StatsSaltFile: get(EnvStatsSaltFile, ""),
 
 		StatsCityDatabaseURL: get(EnvStatsCityDBURL, stats.DefaultCityDatabaseURL),
+		StatsASNDatabaseURL:  get(EnvStatsASNDBURL, stats.DefaultASNDatabaseURL),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
@@ -220,6 +227,7 @@ func New(cfg Config) (*App, error) {
 
 		DatabaseDir:     filepath.Join(cfg.WorkDir, databasesSubdir),
 		CityDatabaseURL: cfg.StatsCityDatabaseURL,
+		ASNDatabaseURL:  cfg.StatsASNDatabaseURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
@@ -252,7 +260,9 @@ func (a *App) MetricsHandler() http.Handler {
 }
 
 // Close stops serve mode's background work that isn't Run's, such as Site
-// Statistics' downloads, and waits for it to stop.
+// Statistics' recorder and downloads, and waits for it to stop. Site
+// Statistics first record the requests and write the lines still queued,
+// for a few seconds at most.
 func (a *App) Close() {
 	a.stats.Close()
 }

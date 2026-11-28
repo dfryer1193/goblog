@@ -39,7 +39,7 @@ func newFeedReaders(c *crawlers) *feedReaders {
 // match returns the feed reader with userAgent, if it's a known one.
 func (f *feedReaders) match(userAgent string) (feedReader, bool) {
 	name, ok := unlistedFeedReader(userAgent)
-	if cr, listed := f.crawlers.match(userAgent, true); listed {
+	if cr, listed := f.crawlers.matchFeedReader(userAgent); listed {
 		name, ok = cr.name, true
 	}
 	if !ok {
