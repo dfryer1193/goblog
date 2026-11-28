@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -29,6 +30,10 @@ const (
 	// sourceInternal is navigation within the site: no Source.
 	sourceInternal = "internal"
 )
+
+// ipSourceName is the Source name of every referrer from an IP address, so
+// no address is ever on a line.
+const ipSourceName = "ip"
 
 // maxValueLen caps, in characters, each Campaign value and Source name a
 // line carries, since they come from the request.
@@ -181,6 +186,9 @@ func (l sourceList) sourceOf(req request, siteHost string) source {
 	case internal:
 		return source{Kind: sourceInternal}
 	}
+	if _, err := netip.ParseAddr(ref); err == nil {
+		return source{Kind: sourceSite, Name: ipSourceName, Entry: true}
+	}
 	if s, ok := l.lookup(ref); ok {
 		return source{Kind: s.kind, Name: s.name, Entry: true}
 	}
@@ -214,12 +222,12 @@ func sameSite(host, siteHost string) bool {
 	return strings.TrimPrefix(host, "www.") == strings.TrimPrefix(siteHost, "www.")
 }
 
-// siteName is the Source name of a referrer from host that isn't on the
-// list: its registrable domain. An app's package name (from a non-web
-// scheme such as android-app), an IP address or a host with no registrable
+// siteName is the Source name of a referrer from host, which isn't on the
+// list or an IP address: its registrable domain. An app's package name
+// (from a non-web scheme such as android-app) or a host with no registrable
 // domain is named as it is.
 func siteName(host, scheme string) string {
-	if scheme != "http" && scheme != "https" || net.ParseIP(host) != nil {
+	if scheme != "http" && scheme != "https" {
 		return capped(host)
 	}
 	domain, err := publicsuffix.EffectiveTLDPlusOne(host)

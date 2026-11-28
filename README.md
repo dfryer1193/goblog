@@ -371,8 +371,9 @@ only the origin to other sites, and a full URL is treated the same way.
   an AI assistant (such as ChatGPT or Claude). The list's name is the
   Source, so `news.ycombinator.com` is `Hacker News`.
 - **`site`:** any other host, grouped by its registrable domain, so
-  `foo.example.co.uk` is `example.co.uk`. An IP address, or an app's package
-  name (from an `android-app://` referrer), is named as it is.
+  `foo.example.co.uk` is `example.co.uk`. An app's package name (from an
+  `android-app://` referrer) is named as it is. Every IP address, IPv4 or
+  IPv6, is the one Source `ip`: no address is ever on a line.
 - **`internal`:** the host is the site's own, from `site.yaml`'s `url`,
   with or without `www.`. Without a `url`, the host the request was sent to
   is the site's. This is navigation within the site, not a Source, and it
