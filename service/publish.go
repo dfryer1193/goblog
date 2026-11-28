@@ -90,6 +90,8 @@ type render struct {
 	// day.
 	tz  *time.Location
 	day models.Date
+	// url is the site's base URL, or "" if it has none.
+	url string
 }
 
 // NewPublisher returns a Publisher for cfg that serves nothing until its
@@ -193,6 +195,7 @@ func (p *Publisher) publish(checkout data.Checkout) error {
 
 	prev := p.current.Swap(&render{
 		dir: dir, files: os.DirFS(dir), commit: checkout.Commit, tz: site.Timezone, day: site.Today,
+		url: site.URL,
 	})
 	p.cfg.Logger.Info(
 		"Switched to a new render",
@@ -234,4 +237,13 @@ func (p *Publisher) Files() fs.FS {
 		return cur.files
 	}
 	return nil
+}
+
+// SiteURL is the base URL of the site being served, from its site.yaml's
+// url, or "" before the first render or if it has none.
+func (p *Publisher) SiteURL() string {
+	if cur := p.current.Load(); cur != nil {
+		return cur.url
+	}
+	return ""
 }
