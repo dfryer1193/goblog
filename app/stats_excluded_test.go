@@ -25,9 +25,8 @@ func TestRequestsFromAnExcludedNetworkEmitNoLinesOrMetrics(t *testing.T) {
 		assertContains(t, "/posts/hello/", resp.body, "Hello body.")
 		assertStatus(t, "/images/cat.png", g.getFrom(t, ip, "/images/cat.png"), http.StatusOK)
 	}
-	// Lines are written in order, so once this Page View's line is out,
-	// any line for the requests above would be too.
 	g.getFrom(t, "198.51.100.1", "/about/")
+	g.finishRecording()
 
 	lines := g.statsLines(t, 1)
 	assertPageView(t, lines[0], "/about/", "page")

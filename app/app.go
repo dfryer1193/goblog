@@ -260,7 +260,9 @@ func (a *App) MetricsHandler() http.Handler {
 }
 
 // Close stops serve mode's background work that isn't Run's, such as Site
-// Statistics' downloads, and waits for it to stop.
+// Statistics' recorder and downloads, and waits for it to stop. Site
+// Statistics first record the requests and write the lines still queued,
+// for a few seconds at most.
 func (a *App) Close() {
 	a.stats.Close()
 }

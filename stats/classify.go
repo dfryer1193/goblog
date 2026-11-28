@@ -63,30 +63,18 @@ func isHTMLPage(kind string) bool {
 	return kind == kindPost || kind == kindPage || kind == kindIndex || kind == kindTag
 }
 
-// isPageView reports whether r, for a page of kind answered with status, is
-// a Page View: a GET that isn't a prefetch, for an HTML page, answered 200
-// or 304.
-func isPageView(r *http.Request, kind string, status int) bool {
-	return r.Method == http.MethodGet &&
-		!isPrefetch(r) &&
-		isHTMLPage(kind) &&
-		(status == http.StatusOK || status == http.StatusNotModified)
+// isPageView reports whether req is a Page View: a GET that isn't a
+// prefetch, for an HTML page, answered 200 or 304.
+func (req request) isPageView() bool {
+	return req.method == http.MethodGet &&
+		!req.isPrefetch() &&
+		isHTMLPage(req.kind) &&
+		(req.status == http.StatusOK || req.status == http.StatusNotModified)
 }
 
-// isVisitorNotFound reports whether r, a Visitor's request for a page of
-// kind, is a Visitor 404: a GET that isn't a prefetch, answered with the
-// 404 page. Like a Page View, a HEAD isn't one.
-func isVisitorNotFound(r *http.Request, kind string) bool {
-	return r.Method == http.MethodGet && !isPrefetch(r) && kind == kindMissing
-}
-
-// isPrefetch reports whether r is a browser's prefetch (or prerender), as
-// its Sec-Purpose or Purpose header says.
-func isPrefetch(r *http.Request) bool {
-	for _, header := range []string{"Sec-Purpose", "Purpose"} {
-		if strings.Contains(strings.ToLower(r.Header.Get(header)), "prefetch") {
-			return true
-		}
-	}
-	return false
+// isVisitorNotFound reports whether req, a Visitor's request, is a Visitor
+// 404: a GET that isn't a prefetch, answered with the 404 page. Like a Page
+// View, a HEAD isn't one.
+func (req request) isVisitorNotFound() bool {
+	return req.method == http.MethodGet && !req.isPrefetch() && req.kind == kindMissing
 }

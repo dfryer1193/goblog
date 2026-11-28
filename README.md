@@ -264,8 +264,12 @@ and the glossary's Site Statistics terms). It classifies each request for
 the site's files and emits what it learns two ways: a JSON line on stdout
 for each Page View, Visitor 404, Bot request and feed fetch, and Prometheus
 metrics. The
-probes and the webhook aren't counted. Emitting never changes or delays a response: if stdout
-can't keep up, lines are dropped.
+probes and the webhook aren't counted. Site Statistics never change or
+delay a response: serving a request only takes a snapshot of it and queues
+it, and everything else (classifying it, looking it up, counting it and
+writing its line) happens in the background. If that can't keep up, the
+request is dropped, uncounted; if stdout can't, the line is. Either way
+`goblog_stats_dropped_total` counts it.
 
 A **Page View** is a `GET` (not `HEAD`) that isn't a browser prefetch (no
 `Sec-Purpose` or `Purpose` header saying `prefetch`), for an HTML page (a
@@ -495,6 +499,7 @@ site's port:
 | `goblog_feed_fetches_total`   | counter | `reader` | Feed fetches                                         |
 | `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
 | `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
+| `goblog_stats_dropped_total`  | counter | none   | Requests left uncounted and lines left unwritten, because recording or stdout couldn't keep up |
 | `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
 | `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city` or `asn`) is loaded, 0 while lines go without its data |
 | `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |

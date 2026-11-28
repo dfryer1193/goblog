@@ -1,8 +1,11 @@
 // Package stats is goblog's Site Statistics: it sits around the handler
 // serving the site's files, classifies each request it sees, and emits what
 // it learns as JSON lines and Prometheus metrics. It never changes a
-// response, and never delays one. See ADR-0002 and the README's Site
-// Statistics section, which documents the lines and metrics as a contract.
+// response, and never delays one: serving a request only takes a snapshot of
+// it and queues it, and a recorder in the background does the rest, dropping
+// requests and lines (and counting them) rather than waiting. See ADR-0002
+// and the README's Site Statistics section, which documents the lines and
+// metrics as a contract.
 package stats
 
 //go:generate go tool mimir-generate
@@ -13,10 +16,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dfryer1193/mjolnir/middleware"
@@ -112,17 +117,41 @@ type Stats struct {
 	// feedSubscribers is the latest subscriber count each feed reader
 	// reported.
 	feedSubscribers *prometheus.GaugeVec
-	// subscribersMu guards subscribersAt.
-	subscribersMu sync.Mutex
 	// subscribersAt is when the fetch arrived whose count feedSubscribers
-	// holds, by feed reader.
+	// holds, by feed reader. Only the recorder uses it.
 	subscribersAt map[string]time.Time
 	// visitorNotFound counts Visitor 404s.
 	visitorNotFound prometheus.Counter
 	// others counts the requests that are none of the other classes, by
 	// kind of page.
 	others *prometheus.CounterVec
+	// dropped counts the requests and lines dropped because the recorder
+	// or the output couldn't keep up.
+	dropped prometheus.Counter
+
+	// queue holds the requests waiting for the recorder.
+	queue chan request
+	// closed is whether Close has been called: nothing more is queued.
+	closed atomic.Bool
+	// closeOnce makes Close idempotent.
+	closeOnce sync.Once
+	// stop is closed to stop the recorder, once it has recorded what's
+	// queued.
+	stop chan struct{}
+	// stopped is closed once the recorder has stopped.
+	stopped chan struct{}
+	// deadline is how long the recorder may take over what's queued once
+	// stop is closed. It's set before stop is closed.
+	deadline time.Time
 }
+
+// requestQueueLen is how many requests can wait for the recorder before new
+// ones are dropped.
+const requestQueueLen = 1024
+
+// drainTimeout bounds how long Close waits for the queued requests and
+// lines.
+const drainTimeout = 2 * time.Second
 
 // New builds Site Statistics from cfg.
 func New(cfg Config) (*Stats, error) {
@@ -156,7 +185,11 @@ func New(cfg Config) (*Stats, error) {
 		return nil, fmt.Errorf("loading the hosting-network list: %w", err)
 	}
 	s.readers = newFeedReaders(crawlers)
-	s.lines = newEmitter(output)
+	s.dropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "goblog_stats_dropped_total",
+		Help: "Requests and lines dropped, uncounted or unwritten, because recording or the output couldn't keep up.",
+	})
+	s.lines = newEmitter(output, s.dropped)
 	// Built here, in serve mode only: it takes a few milliseconds and MiB.
 	s.userAgents = useragent.NewParser()
 	s.registry = prometheus.NewRegistry()
@@ -195,7 +228,7 @@ func New(cfg Config) (*Stats, error) {
 		Help: "The subscriber count each feed reader last reported in its User-Agent.",
 	}, []string{labelReader})
 	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers,
-		s.visitorNotFound, s.others, saltLoaded)
+		s.visitorNotFound, s.others, s.dropped, saltLoaded)
 	if cfg.CityDatabaseURL != "" {
 		s.city = newDatabase(databaseConfig{
 			Name:        cityDatabase,
@@ -216,6 +249,9 @@ func New(cfg Config) (*Stats, error) {
 		})
 		s.registry.MustRegister(newDatabaseCollector(s.asn))
 	}
+	s.queue = make(chan request, requestQueueLen)
+	s.stop, s.stopped = make(chan struct{}), make(chan struct{})
+	go s.recordQueued()
 	return s, nil
 }
 
@@ -225,83 +261,123 @@ func (s *Stats) MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{})
 }
 
-// Close stops Site Statistics' downloads, and waits for them to stop.
+// Close records the queued requests and writes the queued lines, waiting
+// up to drainTimeout for them, then stops Site Statistics' background work
+// (the recorder, the output and the downloads) and waits for it. Requests
+// served after Close aren't recorded.
 func (s *Stats) Close() {
-	for _, db := range []*database{s.city, s.asn} {
-		if db != nil {
-			db.close()
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		deadline := time.Now().Add(drainTimeout)
+		s.deadline = deadline
+		close(s.stop)
+		waitUntil(s.stopped, deadline)
+		s.lines.close(deadline)
+		for _, db := range []*database{s.city, s.asn} {
+			if db != nil {
+				db.close()
+			}
 		}
-	}
+	})
 }
 
 // Wrap returns next with Site Statistics around it: every request next
-// serves is classified and emitted.
+// serves is queued for the recorder, which classifies and emits it.
 func (s *Stats) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.settings.Enabled() {
 			next.ServeHTTP(w, r)
 			return
 		}
-		at := s.now().UTC()
+		req := snapshot(r, s.now().UTC())
+		req.excludedNetworks = s.settings.ExcludedNetworks()
 		ww := middleware.NewResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
-		s.record(r, at, ww.Status())
+		req.status = ww.Status()
+		req.kind = kindOf(req.path, req.status)
+		s.enqueue(req)
 	})
 }
 
-// record emits what Site Statistics learn from a request that arrived at
-// at and was answered with status. Each request is in one class, checked in order: Excluded first,
-// ahead of every other class.
-func (s *Stats) record(r *http.Request, at time.Time, status int) {
+// enqueue queues req for the recorder, or drops it if the queue is full. It
+// never waits.
+func (s *Stats) enqueue(req request) {
+	if s.closed.Load() {
+		return
+	}
+	select {
+	case s.queue <- req:
+	default:
+		s.dropped.Inc()
+	}
+}
+
+// recordQueued is the recorder: it records the queued requests until stop
+// is closed, then what's still queued, until the queue is empty or the
+// deadline has passed.
+func (s *Stats) recordQueued() {
+	defer close(s.stopped)
+	for {
+		select {
+		case req := <-s.queue:
+			s.record(req)
+		case <-s.stop:
+			drain(s.queue, s.deadline, s.record)
+			return
+		}
+	}
+}
+
+// record emits what Site Statistics learn from req. Each request is in one
+// class, checked in order: Excluded first, ahead of every other class.
+func (s *Stats) record(req request) {
 	for _, db := range []*database{s.city, s.asn} {
 		if db != nil {
 			db.refresh()
 		}
 	}
+	ip := req.clientIP()
 	// Excluded: a request from an excluded network emits nothing at all,
 	// neither a line nor a metric.
-	if s.excluded.contains(s.settings.ExcludedNetworks(), clientIP(r)) {
+	if s.excluded.contains(req.excludedNetworks, ip) {
 		return
 	}
-	kind := kindOf(r.URL.Path, status)
-	if kind == kindFeed && s.recordFeedFetch(r, at, status) {
+	if req.kind == kindFeed && s.recordFeedFetch(req) {
 		return
 	}
-	if bot, ok := s.bot(r.UserAgent()); ok {
-		s.botRequests.WithLabelValues(bot, statusClass(status), kind).Inc()
-		asNet := networkOf(s.asn, clientIP(r))
+	if bot, ok := s.bot(req.userAgent); ok {
+		s.botRequests.WithLabelValues(bot, statusClass(req.status), req.kind).Inc()
+		asNet := networkOf(s.asn, ip)
 		s.emit(line{
-			Time: at, Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot,
+			Time: req.at, Class: classBot, Path: req.path, Status: req.status, Kind: req.kind, Bot: bot,
 			ASN: asNet.asn, ASOrg: asNet.org,
 		})
 		return
 	}
 	switch {
-	case isPageView(r, kind, status):
-		s.pageViews.WithLabelValues(kind).Inc()
-		s.emit(s.visitorLine(r, at, classPageView, kind, status))
-	case isVisitorNotFound(r, kind):
+	case req.isPageView():
+		s.pageViews.WithLabelValues(req.kind).Inc()
+		s.emit(s.visitorLine(req, ip, classPageView))
+	case req.isVisitorNotFound():
 		s.visitorNotFound.Inc()
-		s.emit(s.visitorLine(r, at, classNotFound, kind, status))
+		s.emit(s.visitorLine(req, ip, classNotFound))
 	default:
-		s.others.WithLabelValues(kind).Inc()
+		s.others.WithLabelValues(req.kind).Inc()
 	}
 }
 
-// visitorLine is the line of class for a Visitor's request r, which arrived
-// at at, for a page of kind answered with status: it carries the Visitor fields, which Page Views
-// and Visitor 404s share.
-func (s *Stats) visitorLine(r *http.Request, at time.Time, class, kind string, status int) line {
-	ip := clientIP(r)
+// visitorLine is the line of class for req, a Visitor's request from ip:
+// it carries the Visitor fields, which Page Views and Visitor 404s share.
+func (s *Stats) visitorLine(req request, ip netip.Addr, class string) line {
 	loc := locationOf(s.city, ip)
 	asNet := networkOf(s.asn, ip)
-	f := familiesOf(s.userAgents, r.UserAgent())
+	f := familiesOf(s.userAgents, req.userAgent)
 	l := line{
-		Time:         at,
+		Time:         req.at,
 		Class:        class,
-		Path:         r.URL.Path,
-		Status:       status,
-		Kind:         kind,
+		Path:         req.path,
+		Status:       req.status,
+		Kind:         req.kind,
 		Browser:      f.browser,
 		BrowserMajor: f.browserMajor,
 		OS:           f.os,
@@ -316,9 +392,9 @@ func (s *Stats) visitorLine(r *http.Request, at time.Time, class, kind string, s
 		l.Hosting = &hosting
 	}
 	if key := s.salt.current(); key != nil {
-		l.VisitorID = visitorIDFor(key, ip, r.UserAgent())
+		l.VisitorID = visitorIDFor(key, ip, req.userAgent)
 	}
-	return l.withSource(s.sources.sourceOf(r, s.siteHost()))
+	return l.withSource(s.sources.sourceOf(req, s.siteHost()))
 }
 
 // siteHost is the current site's host, from its url, or "" if it has none.
@@ -333,31 +409,29 @@ func (s *Stats) siteHost() string {
 	return hostOf(u.Host)
 }
 
-// recordFeedFetch emits r, a request for the feed that arrived at at and
-// was answered with status, as a feed fetch if a known feed reader sent it,
-// and reports whether it did.
-func (s *Stats) recordFeedFetch(r *http.Request, at time.Time, status int) bool {
-	reader, ok := s.readers.match(r.UserAgent())
+// recordFeedFetch emits req, a request for the feed, as a feed fetch if a
+// known feed reader sent it, and reports whether it did.
+func (s *Stats) recordFeedFetch(req request) bool {
+	reader, ok := s.readers.match(req.userAgent)
 	if !ok {
 		return false
 	}
 	s.feedFetches.WithLabelValues(reader.name).Inc()
 	if reader.subscribers != nil {
-		s.setSubscribers(reader.name, at, *reader.subscribers)
+		s.setSubscribers(reader.name, req.at, *reader.subscribers)
 	}
 	s.emit(line{
-		Time: at, Class: classFeedFetch, Path: r.URL.Path, Status: status, Kind: kindFeed,
+		Time: req.at, Class: classFeedFetch, Path: req.path, Status: req.status, Kind: kindFeed,
 		Reader: reader.name, Subscribers: reader.subscribers,
 	})
 	return true
 }
 
 // setSubscribers sets reader's subscriber count to n, reported by a fetch
-// that arrived at at, unless a later fetch's count is already set: fetches
-// can be recorded out of order.
+// that arrived at at, unless a later fetch's count is already set: a file's
+// response can be sent before its handler returns, so fetches can be queued
+// out of order.
 func (s *Stats) setSubscribers(reader string, at time.Time, n int) {
-	s.subscribersMu.Lock()
-	defer s.subscribersMu.Unlock()
 	if last, ok := s.subscribersAt[reader]; ok && !at.After(last) {
 		return
 	}

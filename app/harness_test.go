@@ -328,6 +328,14 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	}
 }
 
+// finishRecording stops goblog's Site Statistics, once they've recorded
+// every request served so far and written every line. Requests are recorded
+// in the background, and not always in the order they were served: a file's
+// response can be sent before its handler returns.
+func (g *goblog) finishRecording() {
+	g.app.Close()
+}
+
 // writeSalt replaces the salt file's contents with salt, as the daily
 // rotation does.
 func (g *goblog) writeSalt(t *testing.T, salt string) {
@@ -407,8 +415,8 @@ func (g *goblog) metricsBody(t *testing.T) string {
 }
 
 // assertMetrics fails the test unless each of want's samples has its value
-// within 5 seconds. Site Statistics count a request after its response is
-// written, so a scrape right after a response may not count it yet.
+// within 5 seconds. Site Statistics record a request in the background, so
+// a scrape right after a response may not count it yet.
 func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

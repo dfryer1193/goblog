@@ -4,7 +4,6 @@ import (
 	"embed"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -161,15 +160,15 @@ func (l sourceList) lookup(host string) (listed, bool) {
 	return listed{}, false
 }
 
-// sourceOf is where r's Visitor came from, for a site whose own host is
+// sourceOf is where req's Visitor came from, for a site whose own host is
 // siteHost ("" for none).
-func (l sourceList) sourceOf(r *http.Request, siteHost string) source {
+func (l sourceList) sourceOf(req request, siteHost string) source {
 	if siteHost == "" {
-		siteHost = hostOf(r.Host)
+		siteHost = hostOf(req.host)
 	}
-	ref, scheme := referrerHost(r.Header.Get("Referer"))
+	ref, scheme := referrerHost(req.referer)
 	internal := ref != "" && sameSite(ref, siteHost)
-	if c, ok := campaignOf(r.URL.Query()); ok {
+	if c, ok := campaignOf(req.query()); ok {
 		return source{Kind: sourceCampaign, Name: c.Source, Entry: !internal, Campaign: c}
 	}
 	switch {
