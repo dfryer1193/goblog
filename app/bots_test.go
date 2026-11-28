@@ -97,7 +97,7 @@ func TestMetricsCountBotRequestsByBotStatusClassAndKindOfPage(t *testing.T) {
 		g.request(t, http.MethodGet, req.path, req.header)
 	}
 
-	for sample, want := range map[string]float64{
+	g.assertMetrics(t, map[string]float64{
 		`goblog_bot_requests_total{bot="Googlebot",kind="post",status_class="2xx"}`:  2,
 		`goblog_bot_requests_total{bot="Googlebot",kind="image",status_class="2xx"}`: 1,
 		`goblog_bot_requests_total{bot="Googlebot",kind="other",status_class="3xx"}`: 1,
@@ -107,9 +107,5 @@ func TestMetricsCountBotRequestsByBotStatusClassAndKindOfPage(t *testing.T) {
 		`goblog_other_requests_total{kind="image"}`:                                  0,
 		`goblog_other_requests_total{kind="missing"}`:                                0,
 		`goblog_other_requests_total{kind="feed"}`:                                   0,
-	} {
-		if got := g.metric(t, sample); got != want {
-			t.Errorf("%s = %v, want %v", sample, got, want)
-		}
-	}
+	})
 }

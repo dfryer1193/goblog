@@ -87,6 +87,8 @@ type Stats struct {
 	// feedSubscribers is the latest subscriber count each feed reader
 	// reported.
 	feedSubscribers *prometheus.GaugeVec
+	// visitorNotFound counts Visitor 404s.
+	visitorNotFound prometheus.Counter
 	// others counts the requests that are none of the other classes, by
 	// kind of page.
 	others *prometheus.CounterVec
@@ -132,6 +134,10 @@ func New(cfg Config) (*Stats, error) {
 		Name: "goblog_page_views_total",
 		Help: "Page Views, by kind of page.",
 	}, []string{labelKind})
+	s.visitorNotFound = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "goblog_visitor_not_found_total",
+		Help: "Visitor 404s: Visitors' GETs, not prefetches, answered with the 404 page.",
+	})
 	s.others = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_other_requests_total",
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
@@ -148,7 +154,8 @@ func New(cfg Config) (*Stats, error) {
 		Name: "goblog_feed_subscribers",
 		Help: "The subscriber count each feed reader last reported in its User-Agent.",
 	}, []string{labelReader})
-	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers, s.others, saltLoaded)
+	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers,
+		s.visitorNotFound, s.others, saltLoaded)
 	return s, nil
 }
 
@@ -186,15 +193,26 @@ func (s *Stats) record(r *http.Request, status int) {
 		s.emit(line{Time: s.now().UTC(), Class: classBot, Path: r.URL.Path, Status: status, Kind: kind, Bot: bot})
 		return
 	}
-	if !isPageView(r, kind, status) {
+	switch {
+	case isPageView(r, kind, status):
+		s.pageViews.WithLabelValues(kind).Inc()
+		s.emit(s.visitorLine(r, classPageView, kind, status))
+	case isVisitorNotFound(r, kind):
+		s.visitorNotFound.Inc()
+		s.emit(s.visitorLine(r, classNotFound, kind, status))
+	default:
 		s.others.WithLabelValues(kind).Inc()
-		return
 	}
-	s.pageViews.WithLabelValues(kind).Inc()
+}
+
+// visitorLine is the line of class for a Visitor's request r, for a page of
+// kind answered with status: it carries the Visitor fields, which Page Views
+// and Visitor 404s share.
+func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) line {
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
 		Time:         s.now().UTC(),
-		Class:        classPageView,
+		Class:        class,
 		Path:         r.URL.Path,
 		Status:       status,
 		Kind:         kind,
@@ -206,7 +224,7 @@ func (s *Stats) record(r *http.Request, status int) {
 	if key := s.salt.current(); key != nil {
 		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
 	}
-	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
+	return l.withSource(s.sources.sourceOf(r, s.siteHost()))
 }
 
 // siteHost is the current site's host, from its url, or "" if it has none.
