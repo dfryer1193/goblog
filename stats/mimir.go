@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"sync"
 	"sync/atomic"
 
 	"github.com/dfryer1193/mjolnir/utils/set"
@@ -16,14 +15,18 @@ import (
 type mimirSettings struct {
 	// cfg is the generated StatsConfig, or nil until its client has started.
 	cfg atomic.Pointer[StatsConfig]
+	// excluded is the excluded_networks value last sorted. It's replaced,
+	// never changed, so serving a request reads it without a lock.
+	excluded atomic.Pointer[sortedNetworks]
+}
 
-	// mu guards the cached excluded_networks.
-	mu sync.Mutex
-	// excludedSet is the excluded_networks value excluded was made from. A
-	// new value is a new Set: the client replaces it, never changes it.
-	excludedSet set.Set[string]
-	// excluded is excludedSet's entries, sorted.
-	excluded []string
+// sortedNetworks is one value of excluded_networks, and its entries sorted.
+type sortedNetworks struct {
+	// set is the value. A new value is a new Set: the client replaces it,
+	// never changes it.
+	set set.Set[string]
+	// sorted is set's entries, sorted.
+	sorted []string
 }
 
 // StartMimirSettings starts Mimir's client for the StatsConfig, logging to
@@ -63,11 +66,12 @@ func (s *mimirSettings) ExcludedNetworks() []string {
 		return Defaults().ExcludedNetworks()
 	}
 	current := cfg.GetExcludedNetworks()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if current != s.excludedSet {
-		s.excludedSet = current
-		s.excluded = slices.Sorted(slices.Values(current.Items()))
+	if last := s.excluded.Load(); last != nil && last.set == current {
+		return last.sorted
 	}
-	return s.excluded
+	// Requests that see a new value at once each sort it; any of their
+	// results will do.
+	sorted := &sortedNetworks{set: current, sorted: slices.Sorted(slices.Values(current.Items()))}
+	s.excluded.Store(sorted)
+	return sorted.sorted
 }
