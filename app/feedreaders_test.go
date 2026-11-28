@@ -1,8 +1,11 @@
 package app_test
 
 import (
+	"fmt"
 	"net/http"
+	"slices"
 	"testing"
+	"time"
 )
 
 func TestFeedReadersFetchingTheFeedEmitAFeedFetchLine(t *testing.T) {
@@ -110,9 +113,9 @@ func TestABrowserOrBotFetchingTheFeedIsNoFeedFetch(t *testing.T) {
 
 	lines := g.statsLines(t, 1)
 	assertLine(t, lines[0], map[string]any{"class": "bot", "bot": "Googlebot", "path": "/feed.xml"})
-	if got := g.metric(t, `goblog_other_requests_total{kind="feed"}`); got != 1 {
-		t.Errorf(`goblog_other_requests_total{kind="feed"} = %v, want 1`, got)
-	}
+	// The browser's fetch may be recorded after the Bot's: a file's
+	// response can be sent before its handler returns.
+	g.assertMetrics(t, map[string]float64{`goblog_other_requests_total{kind="feed"}`: 1})
 }
 
 func TestMetricsCountFeedFetchesAndHoldEachReadersLatestSubscriberCount(t *testing.T) {
@@ -128,8 +131,23 @@ func TestMetricsCountFeedFetchesAndHoldEachReadersLatestSubscriberCount(t *testi
 		"NetNewsWire (RSS Reader; https://netnewswire.com/)",
 	} {
 		g.request(t, http.MethodGet, "/feed.xml", http.Header{"User-Agent": {userAgent}})
+		// Each fetch arrives later than the last, so the latest count is
+		// the one from the last fetch to arrive, whichever is recorded
+		// last.
+		g.clock.advance(time.Second)
 	}
-	g.statsLines(t, 5)
+	// A line's time is when its request arrived.
+	var times []string
+	for _, l := range g.statsLines(t, 5) {
+		times = append(times, fmt.Sprint(l["time"]))
+	}
+	slices.Sort(times)
+	for i, got := range times {
+		if want := startTime().Add(time.Duration(i) * time.Second).Format(time.RFC3339); got != want {
+			t.Errorf("feed fetch times = %q, want one each second from %s", times, startTime().Format(time.RFC3339))
+			break
+		}
+	}
 
 	for sample, want := range map[string]float64{
 		`goblog_feed_fetches_total{reader="Inoreader"}`:   2,

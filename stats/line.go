@@ -6,16 +6,19 @@ import "time"
 // Statistics lines apart from goblog's ordinary logs on stdout.
 const streamMarker = "goblog_stats"
 
+// class is the class of request a line is, such as classPageView.
+type class string
+
 // The classes of request a line can be.
 const (
 	// classPageView is a Page View.
-	classPageView = "page_view"
+	classPageView class = "page_view"
 	// classNotFound is a Visitor 404.
-	classNotFound = "not_found"
+	classNotFound class = "not_found"
 	// classBot is a Bot's request.
-	classBot = "bot"
+	classBot class = "bot"
 	// classFeedFetch is a known feed reader's request for the feed.
-	classFeedFetch = "feed_fetch"
+	classFeedFetch class = "feed_fetch"
 )
 
 // line is one Site Statistics JSON line. Its field names are a contract
@@ -23,18 +26,24 @@ const (
 type line struct {
 	// Stream is always streamMarker.
 	Stream string `json:"stream"`
-	// Time is when the request was answered, in UTC.
+	// Time is when the request arrived, in UTC.
 	Time time.Time `json:"time"`
 	// Class is the request's class, such as classPageView.
-	Class string `json:"class"`
+	Class class `json:"class"`
 	// Path is the request's path, without its query.
 	Path string `json:"path"`
 	// Status is the response's status code.
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
-	Kind string `json:"kind"`
+	Kind kind `json:"kind"`
 	// Bot is a Bot request's Bot name, or botUnknown.
 	Bot string `json:"bot,omitempty"`
+	// ASN is a Bot request's network's AS number. It's omitted without the
+	// network database, or if it doesn't know the client IP.
+	ASN uint32 `json:"asn,omitempty"`
+	// ASOrg is the organisation owning a Bot request's network. It's
+	// omitted as ASN is, or if the database has no organisation for it.
+	ASOrg string `json:"as_org,omitempty"`
 	// Reader is a feed fetch's feed reader.
 	Reader string `json:"reader,omitempty"`
 	// Subscribers is the subscriber count a feed fetch's feed reader
@@ -64,8 +73,27 @@ type line struct {
 	CampaignSource string `json:"campaign_source,omitempty"`
 	CampaignMedium string `json:"campaign_medium,omitempty"`
 	CampaignName   string `json:"campaign_name,omitempty"`
+	// Country is the Visitor's country, as an ISO 3166-1 alpha-2 code
+	// such as "US". It's omitted without the location database, or if it
+	// doesn't know.
+	Country string `json:"country,omitempty"`
+	// Region is the Visitor's state or province, as its English name such
+	// as "New York". It's omitted as Country is, or if the location
+	// database has a country but no region.
+	Region string `json:"region,omitempty"`
+	// Hosting is whether a Page View's or Visitor 404's network is a
+	// hosting or datacenter network, in the vendored hosting-network list.
+	// It's omitted without the network database, or if it doesn't know the
+	// client IP.
+	Hosting *bool `json:"hosting,omitempty"`
 	// Entry is whether the referrer isn't the site itself.
 	Entry *bool `json:"entry,omitempty"`
+}
+
+// baseLine is the start of req's line, of class c: the fields every line
+// has.
+func (req request) baseLine(c class) line {
+	return line{Time: req.at, Class: c, Path: req.path, Status: req.status, Kind: req.kind}
 }
 
 // withSource is l saying its Visitor came from src.

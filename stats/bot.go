@@ -82,7 +82,7 @@ func newCrawlers() (*crawlers, error) {
 	}
 	c := &crawlers{list: make([]crawler, len(entries)), byPrefix: map[string][]candidate{}}
 	for i, e := range entries {
-		cr := crawler{name: botName(e.Pattern), feedReader: slices.Contains(e.Tags, tagFeedReader)}
+		cr := crawler{name: patternBotName(e.Pattern), feedReader: slices.Contains(e.Tags, tagFeedReader)}
 		if slices.Contains(e.Tags, tagHTTPLibrary) {
 			cr.name = botUnknown
 		}
@@ -109,8 +109,20 @@ func newCrawlers() (*crawlers, error) {
 }
 
 // match returns the first crawler in the list that matches userAgent, if
-// any does. With feedReaders, it considers only the list's feed readers.
-func (c *crawlers) match(userAgent string, feedReaders bool) (crawler, bool) {
+// any does.
+func (c *crawlers) match(userAgent string) (crawler, bool) {
+	return c.firstMatch(userAgent, func(crawler) bool { return true })
+}
+
+// matchFeedReader returns the first of the list's feed readers that matches
+// userAgent, if any does.
+func (c *crawlers) matchFeedReader(userAgent string) (crawler, bool) {
+	return c.firstMatch(userAgent, func(cr crawler) bool { return cr.feedReader })
+}
+
+// firstMatch returns the first crawler in the list that's considered and
+// matches userAgent, if any is.
+func (c *crawlers) firstMatch(userAgent string, considered func(crawler) bool) (crawler, bool) {
 	best := len(c.list)
 	for i := 0; i+prefilterLen <= len(userAgent); i++ {
 		for _, cand := range c.byPrefix[userAgent[i:i+prefilterLen]] {
@@ -118,7 +130,7 @@ func (c *crawlers) match(userAgent string, feedReaders bool) (crawler, bool) {
 				break
 			}
 			cr := c.list[cand.crawler]
-			if (!feedReaders || cr.feedReader) && strings.HasPrefix(userAgent[i:], cand.literal) &&
+			if considered(cr) && strings.HasPrefix(userAgent[i:], cand.literal) &&
 				(cr.re == nil || cr.re.MatchString(userAgent)) {
 				best = cand.crawler
 			}
@@ -128,7 +140,7 @@ func (c *crawlers) match(userAgent string, feedReaders bool) (crawler, bool) {
 		if j >= best {
 			break
 		}
-		if cr := c.list[j]; (!feedReaders || cr.feedReader) && cr.re.MatchString(userAgent) {
+		if cr := c.list[j]; considered(cr) && cr.re.MatchString(userAgent) {
 			best = j
 		}
 	}
@@ -193,10 +205,10 @@ func shortestLen(literals []string) int {
 	return len(slices.MinFunc(literals, func(a, b string) int { return len(a) - len(b) }))
 }
 
-// botName is the Bot name for the crawler list's pattern: the pattern
+// patternBotName is the Bot name for the crawler list's pattern: the pattern
 // without its anchors, escapes and trailing slash, unless that's hard to
 // read, as for "yandex\.com\/bots".
-func botName(pattern string) string {
+func patternBotName(pattern string) string {
 	readable := map[string]string{
 		`AdsBot-Google([^-]|$)`:        "AdsBot-Google",
 		`yandex\.com\/bots`:            "YandexBot",

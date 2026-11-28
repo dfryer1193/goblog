@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 )
@@ -102,7 +103,8 @@ func TestAPageViewLineSaysWhichSourceTheVisitorCameFrom(t *testing.T) {
 		{"Bing in a country", "", "https://cn.bing.com/", sourceOf("search", "Bing", true)},
 		{"DuckDuckGo", "", "https://duckduckgo.com/", sourceOf("search", "DuckDuckGo", true)},
 		{"Kagi", "", "https://kagi.com/", sourceOf("search", "Kagi", true)},
-		{"an AI assistant", "", "https://chatgpt.com/", sourceOf("search", "ChatGPT", true)},
+		// AI assistants.
+		{"an AI assistant", "", "https://chatgpt.com/", sourceOf("ai", "ChatGPT", true)},
 		// Social sites.
 		{"Twitter's shortener", "", "https://t.co/", sourceOf("social", "Twitter", true)},
 		{"Facebook's link redirector", "", "https://l.facebook.com/", sourceOf("social", "Facebook", true)},
@@ -118,7 +120,7 @@ func TestAPageViewLineSaysWhichSourceTheVisitorCameFrom(t *testing.T) {
 		{"a port", "", "https://www.example.com:8443/a/b", sourceOf("site", "example.com", true)},
 		{"a site not on the list", "", "https://lobste.rs/", sourceOf("site", "lobste.rs", true)},
 		{"a site under a hosting suffix", "", "https://alice.github.io/", sourceOf("site", "alice.github.io", true)},
-		{"an IP address", "", "http://192.0.2.1/", sourceOf("site", "192.0.2.1", true)},
+		{"an IP address", "", "http://192.0.2.1/", sourceOf("site", "ip", true)},
 		{
 			"an unlisted app",
 			"",
@@ -185,4 +187,30 @@ func TestWithoutASiteURLTheHostServingTheSiteIsTheSitesHost(t *testing.T) {
 		{"the host serving the site", "", "{goblog}/", sourceOf("internal", "", false)},
 		{"another site", "", "https://blog.example.com/", sourceOf("site", "example.com", true)},
 	})
+}
+
+func TestAReferrerFromAnIPAddressIsTheSourceIPNeverTheAddress(t *testing.T) {
+	t.Parallel()
+	g := startGoblog(t, statsSite(t), nil)
+	g.sync(t)
+	referrers := []string{
+		"http://192.0.2.1/",
+		"https://198.51.100.7:8443/a/b?c=d",
+		"http://[2001:db8::1]/",
+		"https://[2001:db8::2]:8443/",
+		"http://[::ffff:192.0.2.3]/",
+		"android-app://203.0.113.4/",
+	}
+	for _, referer := range referrers {
+		g.request(t, http.MethodGet, "/posts/hello/", http.Header{"Referer": {referer}})
+	}
+
+	for _, line := range g.statsLines(t, len(referrers)) {
+		assertSource(t, line, sourceOf("site", "ip", true))
+		if source, ok := line["source"].(string); ok {
+			if _, err := netip.ParseAddr(source); err == nil {
+				t.Errorf("source = %q, an IP address; line: %v", source, line)
+			}
+		}
+	}
 }

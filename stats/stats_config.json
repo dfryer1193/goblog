@@ -1,0 +1,18 @@
+{
+  "type_name": "StatsConfig",
+  "display_name": "Site Statistics",
+  "items": [
+    {
+      "name": "excluded_networks",
+      "description": "CIDRs, such as the author's own networks, whose requests emit no Site Statistics at all",
+      "type": "string_set",
+      "value": "[]"
+    },
+    {
+      "name": "enabled",
+      "description": "Whether Site Statistics are emitted; off, the site is still served",
+      "type": "bool",
+      "value": "true"
+    }
+  ]
+}

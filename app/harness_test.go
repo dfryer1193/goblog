@@ -199,6 +199,22 @@ func (o *statsOutput) lines() []string {
 type fakeStatsConfig struct {
 	mu       sync.Mutex
 	disabled bool
+	excluded []string
+}
+
+// ExcludedNetworks are the CIDRs whose requests emit nothing. There are
+// none by default.
+func (c *fakeStatsConfig) ExcludedNetworks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.excluded
+}
+
+// setExcludedNetworks replaces the excluded networks with cidrs.
+func (c *fakeStatsConfig) setExcludedNetworks(cidrs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.excluded = cidrs
 }
 
 // Enabled reports whether Site Statistics are on. They are by default.
@@ -238,8 +254,10 @@ type goblog struct {
 // startGoblog starts goblog's serve mode against repo, configured from env
 // the way main configures it. env adds to, or overrides, the defaults:
 // GOBLOG_CONTENT_URL is repo's file:// URL, GOBLOG_WORK_DIR a temporary
-// directory and GOBLOG_WEBHOOK_SECRET webhookSecret. The clock starts at startTime. goblog hasn't synced yet: call
-// sync.
+// directory, GOBLOG_WEBHOOK_SECRET webhookSecret, GOBLOG_STATS_CITY_DB_URL
+// a databaseServer releasing geoLite2City every month and
+// GOBLOG_STATS_ASN_DB_URL one releasing geoLite2ASN. The clock starts at
+// startTime. goblog hasn't synced yet: call sync.
 func startGoblog(t *testing.T, repo *contentRepo, env map[string]string) *goblog {
 	t.Helper()
 	return startGoblogWritingStatsTo(t, repo, env, nil)
@@ -257,6 +275,16 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		"GOBLOG_WORK_DIR":        workDir,
 		"GOBLOG_WEBHOOK_SECRET":  webhookSecret,
 		"GOBLOG_STATS_SALT_FILE": saltFile,
+	}
+	if _, ok := env[cityEnv]; !ok {
+		databases := newDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2City)
+		maps.Copy(vars, databases.env())
+	}
+	if _, ok := env[asnEnv]; !ok {
+		databases := newASNDatabaseServer(t)
+		databases.releaseEveryMonth(t, geoLite2ASN)
+		maps.Copy(vars, databases.env())
 	}
 	maps.Copy(vars, env)
 	cfg, err := app.ConfigFromEnv(func(key string) (string, bool) {
@@ -282,6 +310,7 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
+	t.Cleanup(a.Close)
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
 	metrics := httptest.NewServer(a.MetricsHandler())
@@ -297,6 +326,14 @@ func startGoblogWritingStatsTo(t *testing.T, repo *contentRepo, env map[string]s
 		saltFile:    cfg.StatsSaltFile,
 		statsLog:    statsLog,
 	}
+}
+
+// finishRecording stops goblog's Site Statistics, once they've recorded
+// every request served so far and written every line. Requests are recorded
+// in the background, and not always in the order they were served: a file's
+// response can be sent before its handler returns.
+func (g *goblog) finishRecording() {
+	g.app.Close()
 }
 
 // writeSalt replaces the salt file's contents with salt, as the daily
@@ -342,6 +379,22 @@ func writeFile(t *testing.T, path, content string) {
 // or 0 if there's no such sample.
 func (g *goblog) metric(t *testing.T, sample string) float64 {
 	t.Helper()
+	for line := range strings.Lines(g.metricsBody(t)) {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
+			f, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
+			}
+			return f
+		}
+	}
+	return 0
+}
+
+// metricsBody scrapes goblog's metrics handler at /metrics and returns what
+// it serves.
+func (g *goblog) metricsBody(t *testing.T) string {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.metrics.URL+"/metrics", http.NoBody)
 	if err != nil {
 		t.Fatalf("building metrics request: %v", err)
@@ -358,21 +411,12 @@ func (g *goblog) metric(t *testing.T, sample string) float64 {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /metrics status = %d; body:\n%s", resp.StatusCode, body)
 	}
-	for line := range strings.Lines(string(body)) {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(line), sample+" "); ok {
-			f, parseErr := strconv.ParseFloat(value, 64)
-			if parseErr != nil {
-				t.Fatalf("metric %s has value %q: %v", sample, value, parseErr)
-			}
-			return f
-		}
-	}
-	return 0
+	return string(body)
 }
 
 // assertMetrics fails the test unless each of want's samples has its value
-// within 5 seconds. Site Statistics count a request after its response is
-// written, so a scrape right after a response may not count it yet.
+// within 5 seconds. Site Statistics record a request in the background, so
+// a scrape right after a response may not count it yet.
 func (g *goblog) assertMetrics(t *testing.T, want map[string]float64) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
