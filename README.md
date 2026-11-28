@@ -94,10 +94,11 @@ The server is configured from the environment:
 | `GOBLOG_CONTENT_BRANCH`  | The branch to publish                                                               | the remote's default branch                |
 | `GOBLOG_DEPLOY_KEY`      | A PEM-encoded SSH private key, e.g. a read-only deploy key, for an SSH URL          | none                                       |
 | `GOBLOG_SSH_KNOWN_HOSTS` | `known_hosts` lines for the SSH host, e.g. GitHub's published host keys. **Required with `GOBLOG_DEPLOY_KEY`** in the container image | `$SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` |
-| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
+| `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone, the rendered site and the [location database](#location), e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
 | `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs: see [the salt file](#the-salt-file)     | none: Page Views have no Visitor ID        |
+| `GOBLOG_STATS_CITY_DB_URL` | The URL of the [location database](#location)'s monthly release, with `{YYYY}` and `{MM}` for its year and month | `https://download.db-ip.com/free/dbip-city-lite-{YYYY}-{MM}.mmdb.gz` |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
@@ -327,6 +328,8 @@ contract: later versions only add fields.
 | `campaign_name` | A Campaign's `utm_campaign`, if it has one |
 | `entry`  | Whether the Visitor arrived from outside the site: `false` only when the referrer is the site itself |
 | `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
+| `country` | The Visitor's country, as an ISO 3166-1 alpha-2 code such as `US`. Page Views and Visitor 404s only. Omitted without the [location database](#location), or if it doesn't know the client IP |
+| `region` | The Visitor's state or province, as its English name such as `New York`. Omitted as `country` is, or if the database has only the country |
 | `bot`    | A Bot request's Bot name, or `unknown`                            |
 | `reader` | A feed fetch's feed reader, such as `Inoreader`                   |
 | `subscribers` | A feed fetch's reported subscriber count; absent if the reader reports none |
@@ -334,8 +337,8 @@ contract: later versions only add fields.
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
-{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"lobste.rs","source_kind":"site","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"Hacker News","source_kind":"social","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"not_found","path":"/posts/old-name/","status":404,"kind":"missing","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","country":"US","region":"New York","source":"lobste.rs","source_kind":"site","entry":true}
 {"stream":"goblog_stats","time":"2026-03-10T15:00:01Z","class":"bot","path":"/wp-login.php","status":404,"kind":"missing","bot":"unknown"}
 {"stream":"goblog_stats","time":"2026-03-10T15:00:02Z","class":"feed_fetch","path":"/feed.xml","status":200,"kind":"feed","reader":"Inoreader","subscribers":3}
 ```
@@ -411,6 +414,39 @@ else is emitted as usual. goblog logs a warning when the salt becomes
 unusable (not on every request), `goblog_stats_salt_loaded` reads 0, and
 Visitor IDs come back once the file is usable again.
 
+### Location
+
+IP geolocation by [DB-IP](https://db-ip.com).
+
+A Page View's or Visitor 404's `country` and `region` come from the client IP, looked up in
+[DB-IP's IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite)
+database, licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Nothing finer
+than the state or province is read: never the city or coordinates. DB-IP
+Lite has no codes for states and provinces, so the region is the
+database's English name for it.
+
+goblog downloads the database into `databases/` in `GOBLOG_WORK_DIR` in
+the background at startup, so the site is served at once, and Page Views
+have a location once it's loaded. It's memory-mapped, so lookups never wait
+on the disk or the network.
+
+- **Releases:** DB-IP releases it on the 1st of each month, and serves only
+  this month's and last month's. goblog fetches this month's release, or
+  last month's if this month's isn't out yet. `GOBLOG_STATS_CITY_DB_URL`
+  sets where from: `{YYYY}` and `{MM}` are replaced with the release's year
+  and month. A gzipped release is decompressed as it downloads.
+- **Refreshing:** until it has this month's release, goblog tries again
+  an hour after each attempt (on a request, by the clock), and swaps the
+  new copy in without a restart. It keeps the copy in use until the new
+  one has loaded and been checked, then deletes the old one.
+- **Failures:** if the download fails, goblog keeps serving, logs a
+  warning, and keeps using the copy it has. Without one, lines go
+  without `country` and `region`, and `goblog_stats_database_loaded` reads
+  0.
+- **Disk:** the work directory holds the copy in use and, while a new
+  release downloads, the new one: about 250 MB for DB-IP's City Lite.
+
 ### The metrics
 
 Served at `/metrics` on `GOBLOG_METRICS_PORT` (default `9090`), never on the
@@ -425,6 +461,8 @@ site's port:
 | `goblog_feed_subscribers`     | gauge   | `reader` | The subscriber count each feed reader last reported  |
 | `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as a Visitor's images, assets, feed, redirects, and `HEAD` and prefetched 404s |
 | `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
+| `goblog_stats_database_loaded` | gauge  | `database` | 1 while a copy of the database (`city`) is loaded, 0 while lines go without its data |
+| `goblog_stats_database_age_seconds` | gauge | `database` | The time since the start of the loaded release's month. Absent while none is loaded |
 
 Bot and feed reader names come from the crawler list, so their label sets
 are bounded.
@@ -496,3 +534,7 @@ The code follows Ivaldi's layers, and lint enforces which may import which:
 ## Licence
 
 See [LICENSE](LICENSE).
+
+IP geolocation by [DB-IP](https://db-ip.com), under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): see
+[Location](#location).

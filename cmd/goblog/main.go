@@ -85,5 +85,6 @@ func serve() {
 		lg.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
+	a.Close()
 	lg.Info("Server stopped")
 }

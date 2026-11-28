@@ -66,6 +66,13 @@ type Config struct {
 	// Without a url, or with a nil SiteURL, the host a request was sent to
 	// is the site's host.
 	SiteURL func() string
+	// DatabaseDir is the directory the location database is downloaded
+	// into.
+	DatabaseDir string
+	// CityDatabaseURL is the City database's URL template, such as
+	// DefaultCityDatabaseURL, with {YYYY} and {MM} for the release's year
+	// and month. Empty means no location.
+	CityDatabaseURL string
 }
 
 // Stats is Site Statistics, built by New.
@@ -77,6 +84,8 @@ type Stats struct {
 	sources  sourceList
 	lines    *emitter
 	salt     *salt
+	// city is the City database, or nil for no location.
+	city *database
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
 	// crawlers recognises Bots by the crawler list.
@@ -164,6 +173,16 @@ func New(cfg Config) (*Stats, error) {
 	}, []string{labelReader})
 	s.registry.MustRegister(s.pageViews, s.botRequests, s.feedFetches, s.feedSubscribers,
 		s.visitorNotFound, s.others, saltLoaded)
+	if cfg.CityDatabaseURL != "" {
+		s.city = newDatabase(databaseConfig{
+			Name:        cityDatabase,
+			URLTemplate: cfg.CityDatabaseURL,
+			Dir:         cfg.DatabaseDir,
+			Now:         s.now,
+			Logger:      logger,
+		})
+		s.registry.MustRegister(newDatabaseCollector(s.city))
+	}
 	return s, nil
 }
 
@@ -171,6 +190,13 @@ func New(cfg Config) (*Stats, error) {
 // its own port, never on the site's router.
 func (s *Stats) MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{})
+}
+
+// Close stops Site Statistics' downloads, and waits for them to stop.
+func (s *Stats) Close() {
+	if s.city != nil {
+		s.city.close()
+	}
 }
 
 // Wrap returns next with Site Statistics around it: every request next
@@ -191,6 +217,9 @@ func (s *Stats) Wrap(next http.Handler) http.Handler {
 // status. Each request is in one class, checked in order: Excluded first,
 // ahead of every other class.
 func (s *Stats) record(r *http.Request, status int) {
+	if s.city != nil {
+		s.city.refresh()
+	}
 	// Excluded: a request from an excluded network emits nothing at all,
 	// neither a line nor a metric.
 	if s.excluded.contains(s.settings.ExcludedNetworks(), clientIP(r)) {
@@ -221,6 +250,8 @@ func (s *Stats) record(r *http.Request, status int) {
 // kind answered with status: it carries the Visitor fields, which Page Views
 // and Visitor 404s share.
 func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) line {
+	ip := clientIP(r)
+	loc := locationOf(s.city, ip)
 	f := familiesOf(s.userAgents, r.UserAgent())
 	l := line{
 		Time:         s.now().UTC(),
@@ -232,9 +263,11 @@ func (s *Stats) visitorLine(r *http.Request, class, kind string, status int) lin
 		BrowserMajor: f.browserMajor,
 		OS:           f.os,
 		Device:       f.device,
+		Country:      loc.country,
+		Region:       loc.region,
 	}
 	if key := s.salt.current(); key != nil {
-		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
+		l.VisitorID = visitorIDFor(key, ip, r.UserAgent())
 	}
 	return l.withSource(s.sources.sourceOf(r, s.siteHost()))
 }

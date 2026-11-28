@@ -8,6 +8,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/medama-io/go-useragent v1.2.5
+	github.com/oschwald/maxminddb-golang/v2 v2.9.1
 	github.com/prometheus/client_golang v1.25.0
 	github.com/worldtree-industries/mimir v0.2.0
 	github.com/yuin/goldmark v1.8.7
@@ -60,7 +61,7 @@ require (
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )

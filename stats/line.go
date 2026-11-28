@@ -64,6 +64,14 @@ type line struct {
 	CampaignSource string `json:"campaign_source,omitempty"`
 	CampaignMedium string `json:"campaign_medium,omitempty"`
 	CampaignName   string `json:"campaign_name,omitempty"`
+	// Country is the Visitor's country, as an ISO 3166-1 alpha-2 code
+	// such as "US". It's omitted without the location database, or if it
+	// doesn't know.
+	Country string `json:"country,omitempty"`
+	// Region is the Visitor's state or province, as its English name such
+	// as "New York". It's omitted as Country is, or if the location
+	// database has a country but no region.
+	Region string `json:"region,omitempty"`
 	// Entry is whether the referrer isn't the site itself.
 	Entry *bool `json:"entry,omitempty"`
 }
