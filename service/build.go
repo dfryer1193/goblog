@@ -126,6 +126,7 @@ func Build(content fs.FS, now time.Time, opts BuildOptions) (*models.Site, error
 	}
 	return &models.Site{
 		Files: b.out.files, Problems: b.problems, Warnings: b.warnings, Timezone: tz, Today: b.today,
+		URL: settings.URL,
 	}, nil
 }
 

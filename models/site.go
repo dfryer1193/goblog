@@ -25,6 +25,9 @@ type Site struct {
 	// Today is the build's date in Timezone. Rendering again on a later
 	// date may publish scheduled Posts.
 	Today Date
+	// URL is the site's base URL, from site.yaml's url, or "" if it has
+	// none.
+	URL string
 }
 
 // Paths returns the output files' paths in sorted order.

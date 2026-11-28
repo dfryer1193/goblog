@@ -6,7 +6,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/dfryer1193/goblog/api"
 	"github.com/dfryer1193/goblog/data"
 	"github.com/dfryer1193/goblog/service"
+	"github.com/dfryer1193/goblog/stats"
 )
 
 // The environment variables serve mode reads.
@@ -41,6 +44,9 @@ const (
 	EnvWorkDir = "GOBLOG_WORK_DIR"
 	// EnvPort is the port to listen on. Default: 8080.
 	EnvPort = "PORT"
+	// EnvMetricsPort is the port serving the Site Statistics metrics at
+	// /metrics, apart from the site. Default: 9090.
+	EnvMetricsPort = "GOBLOG_METRICS_PORT"
 	// EnvWebhookSecret is the GitHub webhook's secret. Optional; without
 	// it, the webhook endpoint is disabled (404).
 	EnvWebhookSecret = "GOBLOG_WEBHOOK_SECRET" //nolint:gosec // the variable's name, not a secret
@@ -48,6 +54,18 @@ const (
 	// new commit and the date for a rollover, as a Go duration such as
 	// "1m" or "30s". Default: 1m.
 	EnvPollInterval = "GOBLOG_POLL_INTERVAL"
+	// EnvStatsSaltFile is the path of the daily salt for Site Statistics'
+	// Visitor IDs (see the README for its contract). Optional; without it,
+	// Page Views have no Visitor ID.
+	EnvStatsSaltFile = "GOBLOG_STATS_SALT_FILE"
+	// EnvStatsCityDBURL is the URL template of the location database's
+	// monthly release, with {YYYY} and {MM} for its year and month.
+	// Default: DB-IP's City Lite. A gzipped database is gunzipped.
+	EnvStatsCityDBURL = "GOBLOG_STATS_CITY_DB_URL"
+	// EnvStatsASNDBURL is the URL template of the network database's
+	// monthly release, with {YYYY} and {MM} for its year and month.
+	// Default: DB-IP's ASN Lite. A gzipped database is gunzipped.
+	EnvStatsASNDBURL = "GOBLOG_STATS_ASN_DB_URL"
 )
 
 // syncTimeout bounds each background sync, so a hung fetch can't hold up
@@ -56,6 +74,12 @@ const syncTimeout = 5 * time.Minute
 
 // defaultPort is the port goblog listens on when PORT isn't set.
 const defaultPort = "8080"
+
+// defaultMetricsPort is the metrics port when GOBLOG_METRICS_PORT isn't set.
+const defaultMetricsPort = "9090"
+
+// MetricsPath is the metrics handler's path.
+const MetricsPath = "/metrics"
 
 // defaultPollInterval is how often goblog polls when GOBLOG_POLL_INTERVAL
 // isn't set.
@@ -68,6 +92,8 @@ const sshUser = "git"
 const (
 	contentSubdir = "content"
 	outputSubdir  = "output"
+	// databasesSubdir holds Site Statistics' downloaded databases.
+	databasesSubdir = "databases"
 )
 
 // Config is serve mode's runtime configuration.
@@ -85,14 +111,34 @@ type Config struct {
 	WorkDir string
 	// Port is the port to listen on.
 	Port string
+	// MetricsPort is the port the metrics handler listens on.
+	MetricsPort string
 	// WebhookSecret is the GitHub webhook's secret, or empty to disable the
 	// webhook endpoint.
 	WebhookSecret string
 	// PollInterval is how often Run polls.
 	PollInterval time.Duration
+	// StatsSaltFile is the path of the daily salt for Visitor IDs, or empty
+	// for none.
+	StatsSaltFile string
+	// StatsCityDatabaseURL is the location database's URL template.
+	StatsCityDatabaseURL string
+	// StatsASNDatabaseURL is the network database's URL template.
+	StatsASNDatabaseURL string
 	// Now is the clock. Nil means time.Now. It isn't read from the
 	// environment; tests set it.
 	Now func() time.Time
+	// StatsConfig is Site Statistics' settings. Nil means the defaults. It
+	// isn't read from the environment: main sets it to the StatsConfig from
+	// Mimir, and tests to their own.
+	StatsConfig stats.Settings
+	// StatsOutput receives the Site Statistics JSON lines. Nil means
+	// stdout. It isn't read from the environment; tests set it.
+	StatsOutput io.Writer
+	// StatsLog receives what Site Statistics log, such as a warning that
+	// there's no salt. Nil means goblog's ordinary logs. It isn't read from
+	// the environment; tests set it.
+	StatsLog io.Writer
 }
 
 // ConfigFromEnv reads Config from the environment through lookup, which has
@@ -111,7 +157,12 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 		KnownHosts:    get(EnvKnownHosts, ""),
 		WorkDir:       get(EnvWorkDir, filepath.Join(os.TempDir(), "goblog")),
 		Port:          get(EnvPort, defaultPort),
+		MetricsPort:   get(EnvMetricsPort, defaultMetricsPort),
 		WebhookSecret: get(EnvWebhookSecret, ""),
+		StatsSaltFile: get(EnvStatsSaltFile, ""),
+
+		StatsCityDatabaseURL: get(EnvStatsCityDBURL, stats.DefaultCityDatabaseURL),
+		StatsASNDatabaseURL:  get(EnvStatsASNDBURL, stats.DefaultASNDatabaseURL),
 	}
 	if cfg.ContentURL == "" {
 		return Config{}, fmt.Errorf("%s is required: set it to the Content Repository's URL", EnvContentURL)
@@ -129,6 +180,8 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 type App struct {
 	publisher *service.Publisher
 	router    *router.Router
+	metrics   http.Handler
+	stats     *stats.Stats
 	logger    *slog.Logger
 	// pollInterval is how often Run polls.
 	pollInterval time.Duration
@@ -160,7 +213,34 @@ func New(cfg Config) (*App, error) {
 		a.logger.Warn("The webhook is disabled because " + EnvWebhookSecret + " isn't set; only polling will sync")
 	}
 	a.webhookSyncs = &trigger{run: a.backgroundSync}
-	a.router, err = api.NewRouter(publisher, api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire})
+	statsLogger := log.GetLogger("stats")
+	if cfg.StatsLog != nil {
+		statsLogger = log.GetLoggerTo("stats", cfg.StatsLog)
+	}
+	siteStats, err := stats.New(stats.Config{
+		Settings: cfg.StatsConfig,
+		Now:      cfg.Now,
+		Output:   cfg.StatsOutput,
+		SiteURL:  publisher.SiteURL,
+		SaltFile: cfg.StatsSaltFile,
+		Logger:   statsLogger,
+
+		DatabaseDir:     filepath.Join(cfg.WorkDir, databasesSubdir),
+		CityDatabaseURL: cfg.StatsCityDatabaseURL,
+		ASNDatabaseURL:  cfg.StatsASNDatabaseURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up Site Statistics: %w", err)
+	}
+	a.stats = siteStats
+	metrics := http.NewServeMux()
+	metrics.Handle("GET "+MetricsPath, siteStats.MetricsHandler())
+	a.metrics = metrics
+	a.router, err = api.NewRouter(
+		publisher,
+		api.Webhook{Secret: cfg.WebhookSecret, Trigger: a.webhookSyncs.fire},
+		siteStats.Wrap,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("building the HTTP handler: %w", err)
 	}
@@ -171,6 +251,20 @@ func New(cfg Config) (*App, error) {
 // and tests can serve it with httptest.
 func (a *App) Router() *router.Router {
 	return a.router
+}
+
+// MetricsHandler serves the Site Statistics metrics at MetricsPath, for the
+// metrics port. It's never on the Router.
+func (a *App) MetricsHandler() http.Handler {
+	return a.metrics
+}
+
+// Close stops serve mode's background work that isn't Run's, such as Site
+// Statistics' recorder and downloads, and waits for it to stop. Site
+// Statistics first record the requests and write the lines still queued,
+// for a few seconds at most.
+func (a *App) Close() {
+	a.stats.Close()
 }
 
 // Sync is the "sync now" operation: fetch the Content Repository's latest
