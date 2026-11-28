@@ -16,8 +16,10 @@ import (
 const (
 	// sourceSite is another site, named by its registrable domain.
 	sourceSite = "site"
-	// sourceSearch is a search engine (or AI assistant) on the list.
+	// sourceSearch is a search engine on the list.
 	sourceSearch = "search"
+	// sourceAI is an AI assistant on the list.
+	sourceAI = "ai"
 	// sourceSocial is a social site on the list.
 	sourceSocial = "social"
 	// sourceCampaign is a Campaign the author tagged a link with.
@@ -41,16 +43,18 @@ const searchEnginesFile = "SearchEngines.yml"
 type listFile struct{ name, kind string }
 
 // listFiles are the vendored list's files. On a host in more than one, the
-// first file wins.
+// first file wins: an AI assistant that's also a search engine, such as
+// ChatGPT, is an AI assistant.
 func listFiles() []listFile {
 	return []listFile{
+		{"AIAssistants.yml", sourceAI},
 		{searchEnginesFile, sourceSearch},
 		{"Socials.yml", sourceSocial},
-		{"AIAssistants.yml", sourceSearch},
 	}
 }
 
-// listFS is Matomo's search-engine and social list. See sources/ORIGIN.md
+// listFS is Matomo's search-engine and social list, with its AI
+// assistants. See sources/ORIGIN.md
 // for its origin, licence and how to update it.
 //
 //go:embed sources/*.yml

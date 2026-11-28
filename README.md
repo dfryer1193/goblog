@@ -327,7 +327,7 @@ contract: later versions only add fields.
 | `os`            | The operating system's family: `Windows`, `macOS`, `Linux`, `ChromeOS`, `iOS`, `Android`, `FreeBSD` or `OpenBSD`; `other` if it isn't recognised |
 | `device`        | The device type: `desktop`, `mobile`, `tablet` or `tv`; `unknown` if it isn't recognised |
 | `source` | The Source's name, such as `Google`, `Hacker News`, `example.co.uk` or a Campaign's source. Absent for `direct` and `internal` |
-| `source_kind` | The kind of Source: `search`, `social`, `site`, `campaign`, `direct` or `internal` |
+| `source_kind` | The kind of Source: `search`, `social`, `ai`, `site`, `campaign`, `direct` or `internal` |
 | `campaign_source` | A Campaign's `utm_source` or `ref`. Absent unless `source_kind` is `campaign` |
 | `campaign_medium` | A Campaign's `utm_medium`, if it has one |
 | `campaign_name` | A Campaign's `utm_campaign`, if it has one |
@@ -364,11 +364,12 @@ on a Mac by default, so it counts as `macOS` and `desktop`.
 The Source comes from the `Referer` header's host. Browsers mostly send
 only the origin to other sites, and a full URL is treated the same way.
 
-- **`search` and `social`:** the host is on
+- **`search`, `social` and `ai`:** the host is on
   [Matomo's search-engine and social list](https://github.com/matomo-org/searchengine-and-social-list),
   vendored in [`stats/sources`](stats/sources/ORIGIN.md) with its origin,
-  licence (CC0) and how to update it. Its AI assistants count as `search`.
-  The list's name is the Source, so `news.ycombinator.com` is `Hacker News`.
+  licence (CC0) and how to update it, as a search engine, a social site or
+  an AI assistant (such as ChatGPT or Claude). The list's name is the
+  Source, so `news.ycombinator.com` is `Hacker News`.
 - **`site`:** any other host, grouped by its registrable domain, so
   `foo.example.co.uk` is `example.co.uk`. An IP address, or an app's package
   name (from an `android-app://` referrer), is named as it is.

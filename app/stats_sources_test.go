@@ -102,7 +102,8 @@ func TestAPageViewLineSaysWhichSourceTheVisitorCameFrom(t *testing.T) {
 		{"Bing in a country", "", "https://cn.bing.com/", sourceOf("search", "Bing", true)},
 		{"DuckDuckGo", "", "https://duckduckgo.com/", sourceOf("search", "DuckDuckGo", true)},
 		{"Kagi", "", "https://kagi.com/", sourceOf("search", "Kagi", true)},
-		{"an AI assistant", "", "https://chatgpt.com/", sourceOf("search", "ChatGPT", true)},
+		// AI assistants.
+		{"an AI assistant", "", "https://chatgpt.com/", sourceOf("ai", "ChatGPT", true)},
 		// Social sites.
 		{"Twitter's shortener", "", "https://t.co/", sourceOf("social", "Twitter", true)},
 		{"Facebook's link redirector", "", "https://l.facebook.com/", sourceOf("social", "Facebook", true)},
