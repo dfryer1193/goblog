@@ -97,6 +97,7 @@ The server is configured from the environment:
 | `GOBLOG_WORK_DIR`        | Ephemeral working directory for the clone and the rendered site, e.g. an `emptyDir` | `goblog` under the temp directory          |
 | `PORT`                   | The port to listen on                                                               | `8080`                                     |
 | `GOBLOG_METRICS_PORT`    | The port serving the [Site Statistics](#site-statistics) metrics at `/metrics`      | `9090`                                     |
+| `GOBLOG_STATS_SALT_FILE` | The path of the daily salt for Visitor IDs: see [the salt file](#the-salt-file)     | none: Page Views have no Visitor ID        |
 | `GOBLOG_WEBHOOK_SECRET`  | The GitHub webhook's secret, for checking its signature                             | none: the webhook endpoint is disabled     |
 | `GOBLOG_POLL_INTERVAL`   | How often to poll, as a Go duration such as `1m` or `30s`                           | `1m`                                       |
 
@@ -213,6 +214,9 @@ goblog ships no manifests, so here is everything a deployment needs:
 - **Metrics:** Prometheus metrics at `/metrics` on `GOBLOG_METRICS_PORT`
   (default `9090`), apart from the site. Keep that port off the public
   route, and point your scraper at it.
+- **Salt:** a Secret holding the daily salt, mounted read-only and named by
+  `GOBLOG_STATS_SALT_FILE`, replaced every day at 00:00 UTC by a scheduled
+  job. See [the salt file](#the-salt-file).
 - **Webhook:** the Content Repository's push webhook goes to `/webhook` on
   the site's public hostname.
 - **Replicas:** each replica clones, polls and renders on its own, with no
@@ -291,11 +295,12 @@ only add fields.
 | `campaign_medium` | A Campaign's `utm_medium`, if it has one |
 | `campaign_name` | A Campaign's `utm_campaign`, if it has one |
 | `entry`  | Whether the Visitor arrived from outside the site: `false` only when the referrer is the site itself |
+| `visitor_id` | The Visitor ID: 16 hex digits, the same for one Visitor all UTC day. Omitted without a salt |
 
 For example:
 
 ```json
-{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
+{"stream":"goblog_stats","time":"2026-03-10T15:00:00Z","class":"page_view","path":"/posts/hello/","status":200,"kind":"post","visitor_id":"06c24fb019db91f4","browser":"Firefox","browser_major":"145","os":"Linux","device":"desktop","source":"Hacker News","source_kind":"social","entry":true}
 ```
 
 The browser, operating system and device come from the User-Agent, parsed
@@ -330,6 +335,45 @@ only the origin to other sites, and a full URL is treated the same way.
   isn't an `entry`. Its values are trimmed, lower-cased and cut to 64
   characters, as are `site` names.
 
+### Visitor IDs
+
+A Visitor ID tells Visitors apart for one UTC day, without cookies and
+across every replica. It's the first 8 bytes, in hex (16 digits), of
+HMAC-SHA-256 keyed with the daily salt, over the client IP, a NUL byte and
+the `User-Agent`. Once the salt is replaced and destroyed, nobody, the
+author included, can recompute an old day's Visitor IDs or tie them to the
+new day's.
+
+The client IP is the rightmost `X-Forwarded-For` entry, which the gateway
+in front of goblog appends, so goblog must sit behind exactly one proxy
+that appends it. Without the header, or if its rightmost entry isn't an IP
+address, goblog uses the TCP peer. The client IP is never written to a
+line or a log.
+
+#### The salt file
+
+The salt is a file at the path in `GOBLOG_STATS_SALT_FILE`, such as a
+mounted Kubernetes Secret. goblog only reads it: it never makes up, derives
+or stores a salt of its own. Whatever writes it must follow this contract:
+
+- **Contents:** the raw bytes of the salt, at least **32 bytes** of fresh
+  randomness, such as `head -c 32 /dev/urandom`. The whole file is the
+  salt, byte for byte: nothing is trimmed or decoded, so a trailing newline
+  is part of it.
+- **Rotation:** replaced with a new random salt every day at **00:00 UTC**,
+  with the old one destroyed, not kept anywhere. Every replica reads the
+  same file, so they agree on Visitor IDs.
+- **Reloading:** goblog rereads the file at most every 5 seconds, and uses
+  a new salt as soon as it sees one, with no restart. (A mounted Secret
+  takes the kubelet up to a minute or so to update, so replicas may
+  disagree briefly around 00:00 UTC.)
+
+If the variable isn't set, or the file is missing, empty, shorter than 32
+bytes or unreadable, Page View lines leave out `visitor_id` and everything
+else is emitted as usual. goblog logs a warning when the salt becomes
+unusable (not on every request), `goblog_stats_salt_loaded` reads 0, and
+Visitor IDs come back once the file is usable again.
+
 ### The metrics
 
 Served at `/metrics` on `GOBLOG_METRICS_PORT` (default `9090`), never on the
@@ -339,6 +383,7 @@ site's port:
 | ----------------------------- | ------- | ------ | ------------------------------------------------------ |
 | `goblog_page_views_total`     | counter | `kind` | Page Views                                             |
 | `goblog_other_requests_total` | counter | `kind` | Every other request for the site's files, such as images, assets, the feed, redirects and 404s |
+| `goblog_stats_salt_loaded`    | gauge   | none   | 1 while a usable salt is loaded, 0 while Page Views have no Visitor ID |
 
 ### Settings
 

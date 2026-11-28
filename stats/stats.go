@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,11 @@ type Config struct {
 	Now func() time.Time
 	// Output receives the JSON lines. Nil means os.Stdout.
 	Output io.Writer
+	// SaltFile is the path of the daily salt for Visitor IDs. Empty means
+	// there's no salt, and so no Visitor IDs.
+	SaltFile string
+	// Logger receives Site Statistics' warnings. Nil means slog's default.
+	Logger *slog.Logger
 	// SiteURL is the current site's base URL, from site.yaml's url, or ""
 	// if it has none. A referrer from its host is internal navigation.
 	// Without a url, or with a nil SiteURL, the host a request was sent to
@@ -53,6 +59,7 @@ type Stats struct {
 	siteURL  func() string
 	sources  sourceList
 	lines    *emitter
+	salt     *salt
 	// userAgents parses User-Agents into families.
 	userAgents *useragent.Parser
 	registry   *prometheus.Registry
@@ -84,6 +91,15 @@ func New(cfg Config) (*Stats, error) {
 	// Built here, in serve mode only: it takes a few milliseconds and MiB.
 	s.userAgents = useragent.NewParser()
 	s.registry = prometheus.NewRegistry()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	saltLoaded := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "goblog_stats_salt_loaded",
+		Help: "Whether a salt for Visitor IDs is loaded: 1 if so, 0 if Page Views have no Visitor ID.",
+	})
+	s.salt = newSalt(cfg.SaltFile, s.now, logger, saltLoaded)
 	s.pageViews = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "goblog_page_views_total",
 		Help: "Page Views, by kind of page.",
@@ -92,7 +108,7 @@ func New(cfg Config) (*Stats, error) {
 		Name: "goblog_other_requests_total",
 		Help: "Requests that are no other class (such as images, assets, the feed and redirects), by kind of page.",
 	}, []string{labelKind})
-	s.registry.MustRegister(s.pageViews, s.others)
+	s.registry.MustRegister(s.pageViews, s.others, saltLoaded)
 	return s, nil
 }
 
@@ -136,6 +152,9 @@ func (s *Stats) record(r *http.Request, status int) {
 		BrowserMajor: f.browserMajor,
 		OS:           f.os,
 		Device:       f.device,
+	}
+	if key := s.salt.current(); key != nil {
+		l.VisitorID = visitorIDFor(key, clientIP(r), r.UserAgent())
 	}
 	s.emit(l.withSource(s.sources.sourceOf(r, s.siteHost())))
 }
