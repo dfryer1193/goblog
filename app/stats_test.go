@@ -1,9 +1,11 @@
 package app_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -103,11 +105,13 @@ func TestRequestsThatArentPageViewsEmitNoLine(t *testing.T) {
 			t.Fatalf("%s: %s %s status = %d", tc.name, tc.method, tc.path, resp.status)
 		}
 	}
-	// Lines are written in order, so once this Page View's line is out,
-	// any line for the requests above would be too.
 	g.get(t, "/about/")
+	g.finishRecording()
 
 	lines := g.statsLines(t, 2)
+	slices.SortFunc(lines, func(a, b map[string]any) int {
+		return strings.Compare(fmt.Sprint(a["path"]), fmt.Sprint(b["path"]))
+	})
 	assertPageView(t, lines[0], "/", "index")
 	assertPageView(t, lines[1], "/about/", "page")
 }

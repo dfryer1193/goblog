@@ -10,8 +10,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -22,9 +24,15 @@ import (
 	"github.com/dfryer1193/goblog/stats"
 )
 
-// drainBudget is the whole shutdown budget: half with readiness at 503, half
-// for Shutdown. Keep it under the orchestrator's termination grace period.
+// drainBudget is the site server's shutdown budget: half with readiness at
+// 503, half for Shutdown. Keep it, plus metricsShutdownTimeout and the few
+// seconds Site Statistics take to finish recording, under the
+// orchestrator's termination grace period.
 const drainBudget = 10 * time.Second
+
+// metricsShutdownTimeout bounds the metrics server's Shutdown, once the site
+// server has stopped.
+const metricsShutdownTimeout = 2 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "build" {
@@ -54,9 +62,10 @@ func serve() {
 		os.Exit(1)
 	}
 	// The StatsConfig comes from Mimir, live, in serve mode only. Its client
-	// runs for the life of the process, and until it has read its first
-	// values (up to 5 seconds), the defaults apply.
-	cfg.StatsConfig = stats.StartMimirSettings(context.Background(), log.GetLogger("mimir"))
+	// runs until shutdown, and until it has read its first values (up to 5
+	// seconds), the defaults apply.
+	mimirCtx, stopMimir := context.WithCancel(context.Background())
+	cfg.StatsConfig = stats.StartMimirSettings(mimirCtx, log.GetLogger("mimir"))
 	a, err := app.New(cfg)
 	if err != nil {
 		lg.Error("Failed to start", "error", err)
@@ -71,9 +80,10 @@ func serve() {
 	// The Site Statistics metrics get their own port, so they're never
 	// public through the site's route. If it fails, the site still serves.
 	metricsAddr := net.JoinHostPort("", cfg.MetricsPort)
+	metrics := router.NewServer(metricsAddr, a.MetricsHandler())
 	go func() {
 		lg.Info("Metrics server starting", "addr", metricsAddr)
-		if serveErr := router.NewServer(metricsAddr, a.MetricsHandler()).ListenAndServe(); serveErr != nil {
+		if serveErr := metrics.ListenAndServe(); !errors.Is(serveErr, http.ErrServerClosed) {
 			lg.Error("Metrics server failed; still serving the site", "error", serveErr)
 		}
 	}()
@@ -85,6 +95,14 @@ func serve() {
 		lg.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
+	// The site has stopped: Site Statistics finish recording, then the
+	// metrics server and Mimir's client stop.
 	a.Close()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	defer cancel()
+	if err = metrics.Shutdown(shutdownCtx); err != nil {
+		lg.Warn("Metrics server didn't stop gracefully", "error", err)
+	}
+	stopMimir()
 	lg.Info("Server stopped")
 }

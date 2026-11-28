@@ -6,16 +6,19 @@ import "time"
 // Statistics lines apart from goblog's ordinary logs on stdout.
 const streamMarker = "goblog_stats"
 
+// class is the class of request a line is, such as classPageView.
+type class string
+
 // The classes of request a line can be.
 const (
 	// classPageView is a Page View.
-	classPageView = "page_view"
+	classPageView class = "page_view"
 	// classNotFound is a Visitor 404.
-	classNotFound = "not_found"
+	classNotFound class = "not_found"
 	// classBot is a Bot's request.
-	classBot = "bot"
+	classBot class = "bot"
 	// classFeedFetch is a known feed reader's request for the feed.
-	classFeedFetch = "feed_fetch"
+	classFeedFetch class = "feed_fetch"
 )
 
 // line is one Site Statistics JSON line. Its field names are a contract
@@ -23,16 +26,16 @@ const (
 type line struct {
 	// Stream is always streamMarker.
 	Stream string `json:"stream"`
-	// Time is when the request was answered, in UTC.
+	// Time is when the request arrived, in UTC.
 	Time time.Time `json:"time"`
 	// Class is the request's class, such as classPageView.
-	Class string `json:"class"`
+	Class class `json:"class"`
 	// Path is the request's path, without its query.
 	Path string `json:"path"`
 	// Status is the response's status code.
 	Status int `json:"status"`
 	// Kind is the kind of page, such as kindPost.
-	Kind string `json:"kind"`
+	Kind kind `json:"kind"`
 	// Bot is a Bot request's Bot name, or botUnknown.
 	Bot string `json:"bot,omitempty"`
 	// ASN is a Bot request's network's AS number. It's omitted without the
@@ -85,6 +88,12 @@ type line struct {
 	Hosting *bool `json:"hosting,omitempty"`
 	// Entry is whether the referrer isn't the site itself.
 	Entry *bool `json:"entry,omitempty"`
+}
+
+// baseLine is the start of req's line, of class c: the fields every line
+// has.
+func (req request) baseLine(c class) line {
+	return line{Time: req.at, Class: c, Path: req.path, Status: req.status, Kind: req.kind}
 }
 
 // withSource is l saying its Visitor came from src.

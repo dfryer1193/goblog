@@ -4,7 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"net"
-	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -17,8 +17,10 @@ import (
 const (
 	// sourceSite is another site, named by its registrable domain.
 	sourceSite = "site"
-	// sourceSearch is a search engine (or AI assistant) on the list.
+	// sourceSearch is a search engine on the list.
 	sourceSearch = "search"
+	// sourceAI is an AI assistant on the list.
+	sourceAI = "ai"
 	// sourceSocial is a social site on the list.
 	sourceSocial = "social"
 	// sourceCampaign is a Campaign the author tagged a link with.
@@ -28,6 +30,10 @@ const (
 	// sourceInternal is navigation within the site: no Source.
 	sourceInternal = "internal"
 )
+
+// ipSourceName is the Source name of every referrer from an IP address, so
+// no address is ever on a line.
+const ipSourceName = "ip"
 
 // maxValueLen caps, in characters, each Campaign value and Source name a
 // line carries, since they come from the request.
@@ -42,16 +48,18 @@ const searchEnginesFile = "SearchEngines.yml"
 type listFile struct{ name, kind string }
 
 // listFiles are the vendored list's files. On a host in more than one, the
-// first file wins.
+// first file wins: an AI assistant that's also a search engine, such as
+// ChatGPT, is an AI assistant.
 func listFiles() []listFile {
 	return []listFile{
+		{"AIAssistants.yml", sourceAI},
 		{searchEnginesFile, sourceSearch},
 		{"Socials.yml", sourceSocial},
-		{"AIAssistants.yml", sourceSearch},
 	}
 }
 
-// listFS is Matomo's search-engine and social list. See sources/ORIGIN.md
+// listFS is Matomo's search-engine and social list, with its AI
+// assistants. See sources/ORIGIN.md
 // for its origin, licence and how to update it.
 //
 //go:embed sources/*.yml
@@ -161,15 +169,15 @@ func (l sourceList) lookup(host string) (listed, bool) {
 	return listed{}, false
 }
 
-// sourceOf is where r's Visitor came from, for a site whose own host is
+// sourceOf is where req's Visitor came from, for a site whose own host is
 // siteHost ("" for none).
-func (l sourceList) sourceOf(r *http.Request, siteHost string) source {
+func (l sourceList) sourceOf(req request, siteHost string) source {
 	if siteHost == "" {
-		siteHost = hostOf(r.Host)
+		siteHost = hostOf(req.host)
 	}
-	ref, scheme := referrerHost(r.Header.Get("Referer"))
+	ref, scheme := referrerHost(req.referer)
 	internal := ref != "" && sameSite(ref, siteHost)
-	if c, ok := campaignOf(r.URL.Query()); ok {
+	if c, ok := campaignOf(req.query()); ok {
 		return source{Kind: sourceCampaign, Name: c.Source, Entry: !internal, Campaign: c}
 	}
 	switch {
@@ -177,6 +185,9 @@ func (l sourceList) sourceOf(r *http.Request, siteHost string) source {
 		return source{Kind: sourceDirect, Entry: true}
 	case internal:
 		return source{Kind: sourceInternal}
+	}
+	if _, err := netip.ParseAddr(ref); err == nil {
+		return source{Kind: sourceSite, Name: ipSourceName, Entry: true}
 	}
 	if s, ok := l.lookup(ref); ok {
 		return source{Kind: s.kind, Name: s.name, Entry: true}
@@ -211,12 +222,12 @@ func sameSite(host, siteHost string) bool {
 	return strings.TrimPrefix(host, "www.") == strings.TrimPrefix(siteHost, "www.")
 }
 
-// siteName is the Source name of a referrer from host that isn't on the
-// list: its registrable domain. An app's package name (from a non-web
-// scheme such as android-app), an IP address or a host with no registrable
+// siteName is the Source name of a referrer from host, which isn't on the
+// list or an IP address: its registrable domain. An app's package name
+// (from a non-web scheme such as android-app) or a host with no registrable
 // domain is named as it is.
 func siteName(host, scheme string) string {
-	if scheme != "http" && scheme != "https" || net.ParseIP(host) != nil {
+	if scheme != "http" && scheme != "https" {
 		return capped(host)
 	}
 	domain, err := publicsuffix.EffectiveTLDPlusOne(host)
